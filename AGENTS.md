@@ -3,7 +3,7 @@
 ## Project in 10 lines
 Codatus is a scanner that checks GitHub repos against configurable engineering standards.
 It connects to a GitHub org via the GitHub API, scans every repo against a set of rules
-(file existence, GitHub API-based checks), and produces a Markdown compliance report posted 
+(file existence, GitHub API-based checks), and produces a Markdown compliance report posted
 as a GitHub Issue.
 
 No database. No web UI. No persistence. Scan → report.
@@ -13,13 +13,13 @@ Domain specification (rules, report structure) lives in `README.md`.
 
 ## Operating protocol (must follow)
 
-### Phase 0 - Clarify inputs (no code)
-- If inputs are missing (env vars, file paths, expected behavior, constraints), ask brief questions.
-- Otherwise proceed without questions.
+### Phase 1 - Clarify and design (no code)
 
-### Phase 1 - Design brief (no code)
-Before writing any code, produce a "Design brief" written like you're explaining to a fellow programmer.
-It must be concrete enough that I can build a mental model and predict what code you'll write.
+**Step 1: Clarify inputs.**
+If the issue description is missing information (expected behavior, constraints, edge cases), post a comment asking brief questions. Wait for answers before proceeding. If inputs are clear, skip to Step 2.
+
+**Step 2: Post a design brief.**
+Before writing any code, post a comment with a design brief. It must be concrete enough that the reviewer can predict what the code will look like.
 
 Structure (use these headers):
 
@@ -31,9 +31,9 @@ Structure (use these headers):
 - For each: what it currently does and why it matters for this change.
 
 3) Precedents and patterns to follow
-- Search the repo for existing, similar functionality/patterns (scripts, modules, naming, folder placement, error handling, logging, env/args handling).
+- Search the repo for existing, similar functionality/patterns (naming, folder placement, error handling, logging).
 - If found:
-  - List the exact file paths and the specific parts to emulate (function names, CLI shape, file layout, JSON format, etc.).
+  - List the exact file paths and the specific parts to emulate.
   - State what you will reuse vs what you will add.
   - Ensure the proposed solution aligns with these precedents unless there is a clear reason to diverge.
 - If not found:
@@ -42,42 +42,41 @@ Structure (use these headers):
 4) Proposed solution overview
 - Describe the approach end-to-end as a flow:
   Inputs -> processing steps -> outputs.
-- Call out major components/modules/scripts involved and their responsibilities.
+- Call out major components/files involved and their responsibilities.
 
-5) Detailed changes (major technical points)
-For each major change, include:
+5) Detailed changes
+For each change, include:
 - Where: exact files to edit / new files to add
 - What: functions/sections to add/modify (by name if applicable)
 - How: algorithms/logic, important corner cases
-- Interfaces:
-  - inputs/outputs (CLI args, env vars, HTTP endpoints, file formats)
-  - error handling strategy
-  - logging behavior (no secrets)
-- Compatibility:
-  - what stays backward compatible
-  - what breaks and how to migrate (if anything)
+- Error handling strategy
+- What stays backward compatible, what breaks (if anything)
 
-End with:
-- "Approval gate: Reply OK to start implementation. If you want changes, tell me what to adjust."
-- Do not write code until I reply with explicit "OK".
+End the comment with:
+- "Reply OK to proceed to implementation. If you want changes, tell me what to adjust."
+- Do not write code until the reviewer replies with explicit "OK".
 
-### Phase 2 - Implement in small diffs (code in chunks)
-- Implement the approved design brief only. If you discover a better approach mid-way, stop and propose an updated design brief.
-- Output diffs in one chunk at a time.
-- Each chunk must be related to one file only and be at most 30 lines long. If you need more chunks to complete changes in one file, make sure each can stand on its own and can be reasoned about independently.
-- Each chunk must map back to a specific item in section 5 of the design brief ("Detailed changes").
-- After each chunk, provide an explanation of it (why did you implement it the way you did, what other alternatives you considered and why this is the best) and stop and ask for steering: "Proceed? (OK/Change/Stop)"
+### Phase 2 - Implement, test, and open PR
 
-### Phase 3 - Tests and finalize
-**Tests are mandatory.** Every implementation must include tests before finalization.
+After design approval:
+1. Create a feature branch from `main`.
+2. Implement the full approved design.
+3. Include tests in the same PR (see "Testing approach" below). Tests are mandatory — a PR without tests will not be merged.
+4. Run `go test ./...` and ensure all tests pass. If any test fails, fix the code or the test before proceeding. Do not open a PR with failing tests.
+5. Open a pull request targeting `main`.
 
-- After all implementation chunks are approved, write tests covering the new/changed code.
-- Tests use the mock GitHub client (see "Testing approach" below).
-- Tests are delivered as chunks following the same rules as Phase 2 (one file, ≤30 lines, approval gate).
-- After tests pass, provide:
-  - Summary of all changes (bullet list)
-  - Files changed list
-  - Test coverage summary (what scenarios are covered)
+**PR requirements:**
+- **Title** must follow conventional commits: `type: description` (e.g., `feat: add CI workflow rule`, `fix: correct pass rate calculation`, `refactor: extract report formatting`). Allowed types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`.
+- **Description** must include a summary of the design brief (problem, approach, files changed) so the PR is self-contained without reading the full issue thread.
+- **Link** the PR to the originating issue.
+
+### Handling PR review comments
+
+When the reviewer requests changes on the PR:
+- Push follow-up commits to the same branch addressing each comment.
+- Do not force-push or squash on the branch — the reviewer needs to see what changed since their review.
+- If a review comment requires a design change (not just a code tweak), post a comment explaining the updated approach before implementing it.
+- After pushing fixes, run `go test ./...` again. Do not mark review comments as resolved if tests fail.
 
 ---
 
@@ -103,7 +102,6 @@ Start flat — all `.go` files in the root, all in `package main`:
 ├── scanner.go         # scan logic (takes a client, returns results)
 ├── rules.go           # rule definitions + evaluation
 ├── report.go          # Markdown report generation
-├── config.go          # .standards.yaml parsing
 ├── client_mock.go     # mock GitHubClient for tests
 ├── scanner_test.go    # tests
 ├── rules_test.go
@@ -193,13 +191,13 @@ Report generation tests must verify the Markdown output matches expected structu
   - error formatting and exit codes
   - logging structure and verbosity
   - file naming, folder placement
-- Cite the precedent files in the Design brief (Phase 1, section 3) and describe what you are copying/adapting.
+- Cite the precedent files in the design brief (Phase 1, section 3) and describe what you are copying/adapting.
 
 ---
 
 ## Do-s
 - Prefer concise, explicit code over clever abstractions.
-- Validate required inputs (env vars, CLI args) up front in `main()` — fail fast with actionable messages.
+- Validate required inputs up front in `main()` — fail fast with actionable messages.
 - Use `context.Context` for GitHub API calls — respect cancellation and timeouts.
 - Keep the `GitHubClient` interface narrow. Only add methods when a rule actually needs them.
 - Handle GitHub API rate limits gracefully — log remaining quota, fail clearly when exhausted.
