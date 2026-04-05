@@ -67,16 +67,17 @@ After design approval:
 2. Implement the full approved design.
 3. Include tests (see "Testing approach" below). Tests are mandatory.
 4. Run `go test ./...` and ensure all tests pass. If any test fails, fix the code or the test before proceeding.
-5. Commit all changes to the feature branch with a message following the PR title convention.
+5. Do not commit yet — leave changes uncommitted so the user can review the diff in their IDE.
 
-### Phase 3 - Review and open PR
+### Phase 3 - Review, commit, and open PR
 
-After implementation is complete, tests pass, and changes are committed:
+After implementation is complete and tests pass:
 1. Present a summary of all changes (files added/modified, what each does).
-2. Wait for the user to review the changes in their editor. If the user requests changes, apply them, re-run tests, and commit before proceeding.
-3. Explicitly ask: "Ready to push and create the PR?"
-4. Do not push or open a PR until the user confirms. If the user declines, ask what needs to change.
-5. Push the branch and open a pull request targeting `main`.
+2. Wait for the user to review the uncommitted changes in their IDE. If the user requests changes, apply them and re-run tests before proceeding.
+3. Once the user approves the changes, commit to the feature branch with a message following the PR title convention.
+4. Explicitly ask: "Ready to push and create the PR?"
+5. Do not push or open a PR until the user confirms. If the user declines, ask what needs to change.
+6. Push the branch and open a pull request targeting `main`.
 
 **PR requirements:**
 - **Title** must follow conventional commits: `type: description` (e.g., `feat: add CI workflow rule`, `fix: correct pass rate calculation`, `refactor: extract report formatting`). Allowed types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`.
@@ -102,27 +103,27 @@ When the user requests changes on the PR (either in chat or via GitHub review co
 
 ## Repository layout
 
-Start flat — all `.go` files in the root, all in `package main`:
+The scanner is an importable Go package (`package scanner`) at the module root. The CLI is a thin wrapper in `cmd/scanner/`.
 
 ```
 .
-├── .claude/            # Claude Code settings
+├── .claude/                # Claude Code settings
+├── cmd/
+│   └── scanner/
+│       └── main.go         # thin CLI wrapper (reads env, calls scanner.Run)
 ├── AGENTS.md
 ├── README.md
 ├── go.mod
 ├── go.sum
-├── main.go            # entry point
-├── client.go          # GitHubClient interface + real implementation
-├── scanner.go         # scan logic (takes a client, returns results)
-├── rules.go           # rule definitions + evaluation
-├── report.go          # Markdown report generation
-├── client_mock.go     # mock GitHubClient for tests
-├── scanner_test.go    # tests
+├── client.go               # GitHubClient interface + real implementation
+├── client_mock_test.go     # mock GitHubClient (test-only)
+├── scanner.go              # Config, Run(), Scan()
+├── rules.go                # rule definitions + evaluation
+├── report.go               # Markdown report generation (future)
+├── scanner_test.go         # tests
 ├── rules_test.go
 └── report_test.go
 ```
-
-**Restructure trigger:** when the project grows past 3 distinct concerns that don't belong together in `package main`, refactor into `cmd/codatus/` + `internal/` packages. Do not preemptively create this structure.
 
 ---
 

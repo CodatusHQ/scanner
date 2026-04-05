@@ -1,4 +1,4 @@
-package main
+package scanner
 
 import "context"
 
@@ -10,4 +10,8 @@ type MockGitHubClient struct {
 
 func (m *MockGitHubClient) ListRepos(ctx context.Context, org string) ([]Repo, error) {
 	return m.Repos, m.Err
+}
+
+func (m *MockGitHubClient) ListFiles(ctx context.Context, owner, repo string) ([]string, error) {
+	return nil, nil
 }
