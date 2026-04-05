@@ -59,9 +59,9 @@ func Scan(ctx context.Context, client GitHubClient, org string) ([]RepoResult, e
 			continue
 		}
 
-		files, err := client.ListFiles(ctx, org, repo.Name)
+		files, err := client.GetTree(ctx, org, repo.Name, repo.DefaultBranch)
 		if err != nil {
-			return nil, fmt.Errorf("list files for repo %s: %w", repo.Name, err)
+			return nil, fmt.Errorf("get tree for repo %s: %w", repo.Name, err)
 		}
 		repo.Files = files
 
