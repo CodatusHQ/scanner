@@ -59,6 +59,12 @@ func Scan(ctx context.Context, client GitHubClient, org string) ([]RepoResult, e
 			continue
 		}
 
+		files, err := client.ListFiles(ctx, org, repo.Name)
+		if err != nil {
+			return nil, fmt.Errorf("list files for repo %s: %w", repo.Name, err)
+		}
+		repo.Files = files
+
 		rr := RepoResult{RepoName: repo.Name}
 		for _, rule := range rules {
 			rr.Results = append(rr.Results, RuleResult{

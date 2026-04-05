@@ -14,6 +14,7 @@ type Repo struct {
 	Description   string
 	DefaultBranch string
 	Archived      bool
+	Files         []string // root-level file and directory names
 }
 
 // GitHubClient is the interface for all GitHub API interactions.
@@ -102,8 +103,20 @@ func (c *realGitHubClient) ListRepos(ctx context.Context, org string) ([]Repo, e
 }
 
 func (c *realGitHubClient) ListFiles(ctx context.Context, owner, repo string) ([]string, error) {
-	// TODO: implement when file-existence rules are added
-	return nil, nil
+	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/contents", owner, repo)
+
+	var entries []struct {
+		Name string `json:"name"`
+	}
+	if err := c.doRequest(ctx, url, &entries); err != nil {
+		return nil, fmt.Errorf("list files for %s/%s: %w", owner, repo, err)
+	}
+
+	names := make([]string, len(entries))
+	for i, e := range entries {
+		names[i] = e.Name
+	}
+	return names, nil
 }
 
 func (c *realGitHubClient) CreateIssue(ctx context.Context, owner, repo, title, body string) error {

@@ -6,6 +6,8 @@ import "context"
 type MockGitHubClient struct {
 	Repos    []Repo
 	Err      error
+	Files    map[string][]string // repo name -> file list
+	FilesErr error
 	IssueErr error
 	// CreatedIssue records the last CreateIssue call for assertions.
 	CreatedIssue struct {
@@ -18,6 +20,12 @@ func (m *MockGitHubClient) ListRepos(ctx context.Context, org string) ([]Repo, e
 }
 
 func (m *MockGitHubClient) ListFiles(ctx context.Context, owner, repo string) ([]string, error) {
+	if m.FilesErr != nil {
+		return nil, m.FilesErr
+	}
+	if m.Files != nil {
+		return m.Files[repo], nil
+	}
 	return nil, nil
 }
 
