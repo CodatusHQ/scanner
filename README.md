@@ -154,7 +154,7 @@ The scanner module accepts a `ScanConfig` struct with the following fields:
 |-------|------|----------|-------------|
 | `Org` | `string` | Yes | GitHub organization name to scan |
 | `Token` | `string` | Yes | GitHub token (PAT or GitHub App installation token) |
-| `ReportRepo` | `string` | Yes | Repository where the compliance issue is created (format: `owner/repo`) |
+| `ReportRepo` | `string` | Yes | Repository name where the compliance issue is created (org is taken from `Org`) |
 
 The token must have the following permissions across the org:
 - `repo` (read access to repo contents and branch protection)
