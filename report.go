@@ -12,7 +12,7 @@ import (
 func GenerateReport(org string, results []RepoResult) string {
 	var b strings.Builder
 
-	b.WriteString("# Codatus — Org Compliance Report\n\n")
+	b.WriteString("# Codatus - Org Compliance Report\n\n")
 	fmt.Fprintf(&b, "**Org:** %s\n", org)
 	fmt.Fprintf(&b, "**Scanned:** %s\n", time.Now().UTC().Format("2006-01-02 15:04 UTC"))
 	fmt.Fprintf(&b, "**Repos scanned:** %d\n", len(results))

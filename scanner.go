@@ -34,7 +34,7 @@ func Run(ctx context.Context, cfg Config) error {
 
 	report := GenerateReport(cfg.Org, results)
 
-	title := fmt.Sprintf("Codatus — %s Compliance Report", cfg.Org)
+	title := fmt.Sprintf("Codatus - %s Compliance Report", cfg.Org)
 	if err := client.CreateIssue(ctx, cfg.Org, cfg.ReportRepo, title, report); err != nil {
 		return fmt.Errorf("post report to %s/%s: %w", cfg.Org, cfg.ReportRepo, err)
 	}
