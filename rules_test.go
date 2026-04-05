@@ -73,3 +73,27 @@ func TestHasSubstantialReadme_Fail_Missing(t *testing.T) {
 		t.Error("expected fail when README.md is missing")
 	}
 }
+
+func TestHasLicense_Pass_LICENSE(t *testing.T) {
+	rule := HasLicense{}
+
+	if !rule.Check(Repo{Files: []FileEntry{{Name: "LICENSE"}}}) {
+		t.Error("expected pass when LICENSE exists")
+	}
+}
+
+func TestHasLicense_Pass_LICENSEmd(t *testing.T) {
+	rule := HasLicense{}
+
+	if !rule.Check(Repo{Files: []FileEntry{{Name: "LICENSE.md"}}}) {
+		t.Error("expected pass when LICENSE.md exists")
+	}
+}
+
+func TestHasLicense_Fail(t *testing.T) {
+	rule := HasLicense{}
+
+	if rule.Check(Repo{Files: []FileEntry{{Name: "README.md"}}}) {
+		t.Error("expected fail when no LICENSE file exists")
+	}
+}
