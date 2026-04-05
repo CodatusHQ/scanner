@@ -1,6 +1,8 @@
 package scanner
 
-import "strings"
+import (
+	"strings"
+)
 
 // Rule defines a named check that produces a pass/fail result for a repo.
 type Rule interface {
@@ -21,6 +23,10 @@ func AllRules() []Rule {
 		HasGitignore{},
 		HasSubstantialReadme{},
 		HasLicense{},
+		HasSecurityMd{},
+		HasCIWorkflow{},
+		HasTestDirectory{},
+		HasCodeowners{},
 	}
 }
 
@@ -57,16 +63,71 @@ func (r HasLicense) Check(repo Repo) bool {
 	return hasFile(repo.Files, "LICENSE") || hasFile(repo.Files, "LICENSE.md")
 }
 
-func findFile(files []FileEntry, name string) (FileEntry, bool) {
+// HasSecurityMd checks that SECURITY.md exists in the repo root or .github/.
+type HasSecurityMd struct{}
+
+func (r HasSecurityMd) Name() string { return "Has SECURITY.md" }
+func (r HasSecurityMd) Check(repo Repo) bool {
+	return hasFile(repo.Files, "SECURITY.md") || hasFile(repo.Files, ".github/SECURITY.md")
+}
+
+// HasCIWorkflow checks that at least one .yml or .yaml file exists under .github/workflows/.
+type HasCIWorkflow struct{}
+
+func (r HasCIWorkflow) Name() string { return "Has CI workflow" }
+func (r HasCIWorkflow) Check(repo Repo) bool {
+	for _, f := range repo.Files {
+		if strings.HasPrefix(f.Path, ".github/workflows/") &&
+			(strings.HasSuffix(f.Path, ".yml") || strings.HasSuffix(f.Path, ".yaml")) {
+			return true
+		}
+	}
+	return false
+}
+
+// HasTestDirectory checks that a recognized test directory exists at the repo root.
+type HasTestDirectory struct{}
+
+func (r HasTestDirectory) Name() string { return "Has test directory" }
+func (r HasTestDirectory) Check(repo Repo) bool {
+	testDirs := []string{"test", "tests", "__tests__", "spec", "specs"}
+	for _, dir := range testDirs {
+		if hasDir(repo.Files, dir) {
+			return true
+		}
+	}
+	return false
+}
+
+// HasCodeowners checks that a CODEOWNERS file exists in root, docs/, or .github/.
+type HasCodeowners struct{}
+
+func (r HasCodeowners) Name() string { return "Has CODEOWNERS" }
+func (r HasCodeowners) Check(repo Repo) bool {
+	return hasFile(repo.Files, "CODEOWNERS") ||
+		hasFile(repo.Files, "docs/CODEOWNERS") ||
+		hasFile(repo.Files, ".github/CODEOWNERS")
+}
+
+func findFile(files []FileEntry, path string) (FileEntry, bool) {
 	for _, f := range files {
-		if f.Name == name {
+		if f.Path == path {
 			return f, true
 		}
 	}
 	return FileEntry{}, false
 }
 
-func hasFile(files []FileEntry, name string) bool {
-	_, ok := findFile(files, name)
+func hasFile(files []FileEntry, path string) bool {
+	_, ok := findFile(files, path)
 	return ok
+}
+
+func hasDir(files []FileEntry, path string) bool {
+	for _, f := range files {
+		if f.Path == path && f.Type == "tree" {
+			return true
+		}
+	}
+	return false
 }
