@@ -175,7 +175,7 @@ The real implementation calls GitHub's REST API. Tests use a mock implementation
 At minimum, every rule must have:
 - A passing case (repo satisfies the rule)
 - A failing case (repo violates the rule)
-- An edge case where applicable (e.g., README exists but is under 100 lines)
+- An edge case where applicable (e.g., README exists but is under 2KB)
 
 Report generation tests must verify the Markdown output matches expected structure.
 

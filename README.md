@@ -38,12 +38,12 @@ Each rule produces a **pass** or **fail** result per repository. There are no sc
 **Pass:** file found.
 **Fail:** file not found.
 
-#### 3. Has README over 100 lines
+#### 3. Has README over 2KB
 
-**Check:** a `README.md` file exists in the repo root and contains more than 100 lines.
+**Check:** a `README.md` file exists in the repo root and is larger than 2048 bytes.
 
-**Pass:** `README.md` exists and has >100 lines.
-**Fail:** `README.md` is missing, or exists but has ≤100 lines.
+**Pass:** `README.md` exists and is >2048 bytes.
+**Fail:** `README.md` is missing, or exists but is ≤2048 bytes.
 
 #### 4. Has LICENSE
 
@@ -134,7 +134,7 @@ The report is a single Markdown document posted as a GitHub Issue. Structure:
 |------|--------|
 | Has repo description | ✅ |
 | Has .gitignore | ✅ |
-| Has README over 100 lines | ❌ |
+| Has README over 2KB | ❌ |
 | ... | ... |
 
 ### repo-name-2

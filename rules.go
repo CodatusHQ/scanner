@@ -19,6 +19,7 @@ func AllRules() []Rule {
 	return []Rule{
 		HasRepoDescription{},
 		HasGitignore{},
+		HasSubstantialReadme{},
 	}
 }
 
@@ -38,11 +39,25 @@ func (r HasGitignore) Check(repo Repo) bool {
 	return hasFile(repo.Files, ".gitignore")
 }
 
-func hasFile(files []string, name string) bool {
+// HasSubstantialReadme checks that README.md exists and is larger than 2048 bytes.
+type HasSubstantialReadme struct{}
+
+func (r HasSubstantialReadme) Name() string { return "Has README over 2KB" }
+func (r HasSubstantialReadme) Check(repo Repo) bool {
+	f, ok := findFile(repo.Files, "README.md")
+	return ok && f.Size > 2048
+}
+
+func findFile(files []FileEntry, name string) (FileEntry, bool) {
 	for _, f := range files {
-		if f == name {
-			return true
+		if f.Name == name {
+			return f, true
 		}
 	}
-	return false
+	return FileEntry{}, false
+}
+
+func hasFile(files []FileEntry, name string) bool {
+	_, ok := findFile(files, name)
+	return ok
 }

@@ -29,7 +29,7 @@ func TestHasRepoDescription_Fail_WhitespaceOnly(t *testing.T) {
 func TestHasGitignore_Pass(t *testing.T) {
 	rule := HasGitignore{}
 
-	if !rule.Check(Repo{Files: []string{"README.md", ".gitignore", "main.go"}}) {
+	if !rule.Check(Repo{Files: []FileEntry{{Name: "README.md"}, {Name: ".gitignore"}, {Name: "main.go"}}}) {
 		t.Error("expected pass when .gitignore exists")
 	}
 }
@@ -37,7 +37,7 @@ func TestHasGitignore_Pass(t *testing.T) {
 func TestHasGitignore_Fail(t *testing.T) {
 	rule := HasGitignore{}
 
-	if rule.Check(Repo{Files: []string{"README.md", "main.go"}}) {
+	if rule.Check(Repo{Files: []FileEntry{{Name: "README.md"}, {Name: "main.go"}}}) {
 		t.Error("expected fail when .gitignore is missing")
 	}
 }
@@ -47,5 +47,29 @@ func TestHasGitignore_Fail_EmptyFiles(t *testing.T) {
 
 	if rule.Check(Repo{Files: nil}) {
 		t.Error("expected fail when file list is empty")
+	}
+}
+
+func TestHasSubstantialReadme_Pass(t *testing.T) {
+	rule := HasSubstantialReadme{}
+
+	if !rule.Check(Repo{Files: []FileEntry{{Name: "README.md", Size: 3000}}}) {
+		t.Error("expected pass for README.md over 2KB")
+	}
+}
+
+func TestHasSubstantialReadme_Fail_TooSmall(t *testing.T) {
+	rule := HasSubstantialReadme{}
+
+	if rule.Check(Repo{Files: []FileEntry{{Name: "README.md", Size: 2048}}}) {
+		t.Error("expected fail for README.md exactly 2048 bytes")
+	}
+}
+
+func TestHasSubstantialReadme_Fail_Missing(t *testing.T) {
+	rule := HasSubstantialReadme{}
+
+	if rule.Check(Repo{Files: []FileEntry{{Name: "main.go"}}}) {
+		t.Error("expected fail when README.md is missing")
 	}
 }
