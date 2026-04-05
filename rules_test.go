@@ -1,39 +1,27 @@
-package main
+package scanner
 
 import "testing"
 
 func TestHasRepoDescription_Pass(t *testing.T) {
-	rule := AllRules()[0]
-	repo := Repo{Name: "my-repo", Description: "A useful service"}
+	rule := HasRepoDescription{}
 
-	result := rule.Check(repo)
-
-	if !result.Passed {
-		t.Errorf("expected pass for repo with description, got fail")
-	}
-	if result.RuleName != "Has repo description" {
-		t.Errorf("unexpected rule name: %s", result.RuleName)
+	if !rule.Check(Repo{Name: "my-repo", Description: "A useful service"}) {
+		t.Errorf("expected pass for repo with description")
 	}
 }
 
 func TestHasRepoDescription_Fail_Empty(t *testing.T) {
-	rule := AllRules()[0]
-	repo := Repo{Name: "my-repo", Description: ""}
+	rule := HasRepoDescription{}
 
-	result := rule.Check(repo)
-
-	if result.Passed {
-		t.Errorf("expected fail for repo with empty description, got pass")
+	if rule.Check(Repo{Name: "my-repo", Description: ""}) {
+		t.Errorf("expected fail for repo with empty description")
 	}
 }
 
 func TestHasRepoDescription_Fail_WhitespaceOnly(t *testing.T) {
-	rule := AllRules()[0]
-	repo := Repo{Name: "my-repo", Description: "   \t\n"}
+	rule := HasRepoDescription{}
 
-	result := rule.Check(repo)
-
-	if result.Passed {
-		t.Errorf("expected fail for repo with whitespace-only description, got pass")
+	if rule.Check(Repo{Name: "my-repo", Description: "   \t\n"}) {
+		t.Errorf("expected fail for repo with whitespace-only description")
 	}
 }
