@@ -20,6 +20,7 @@ func AllRules() []Rule {
 		HasRepoDescription{},
 		HasGitignore{},
 		HasSubstantialReadme{},
+		HasLicense{},
 	}
 }
 
@@ -46,6 +47,14 @@ func (r HasSubstantialReadme) Name() string { return "Has README over 2KB" }
 func (r HasSubstantialReadme) Check(repo Repo) bool {
 	f, ok := findFile(repo.Files, "README.md")
 	return ok && f.Size > 2048
+}
+
+// HasLicense checks that a LICENSE or LICENSE.md file exists in the repo root.
+type HasLicense struct{}
+
+func (r HasLicense) Name() string { return "Has LICENSE" }
+func (r HasLicense) Check(repo Repo) bool {
+	return hasFile(repo.Files, "LICENSE") || hasFile(repo.Files, "LICENSE.md")
 }
 
 func findFile(files []FileEntry, name string) (FileEntry, bool) {
