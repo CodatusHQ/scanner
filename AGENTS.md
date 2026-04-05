@@ -13,13 +13,17 @@ Domain specification (rules, report structure) lives in `README.md`.
 
 ## Operating protocol (must follow)
 
+This protocol assumes you are running inside the Claude Code VS Code extension, interacting with the user directly in chat. All communication (design briefs, questions, approvals) happens in the chat — not via GitHub issue comments.
+
 ### Phase 1 - Clarify and design (no code)
 
-**Step 1: Clarify inputs.**
-If the issue description is missing information (expected behavior, constraints, edge cases), post a comment asking brief questions. Wait for answers before proceeding. If inputs are clear, skip to Step 2.
+For trivial changes (typo, config tweak, single-line fix), skip the design brief and go straight to Phase 2.
 
-**Step 2: Post a design brief.**
-Before writing any code, post a comment with a design brief. It must be concrete enough that the reviewer can predict what the code will look like.
+**Step 1: Clarify inputs.**
+If the task description is missing information (expected behavior, constraints, edge cases), ask the user brief questions. Wait for answers before proceeding. If inputs are clear, skip to Step 2.
+
+**Step 2: Present a design brief.**
+Before writing any code, present a design brief in chat. It must be concrete enough that the user can predict what the code will look like.
 
 Structure (use these headers):
 
@@ -52,31 +56,40 @@ For each change, include:
 - Error handling strategy
 - What stays backward compatible, what breaks (if anything)
 
-End the comment with:
+End the design brief with:
 - "Reply OK to proceed to implementation. If you want changes, tell me what to adjust."
-- Do not write code until the reviewer replies with explicit "OK".
+- Do not write code until the user replies with explicit "OK".
 
-### Phase 2 - Implement, test, and open PR
+### Phase 2 - Implement and test
 
 After design approval:
-1. Create a feature branch from `main`.
+1. Pull latest `main`, then create a feature branch. Branch name must match the pattern `type/short-description` using the same types as PR titles (e.g., `feat/add-ci-workflow-rule`, `fix/pass-rate-calculation`).
 2. Implement the full approved design.
-3. Include tests in the same PR (see "Testing approach" below). Tests are mandatory — a PR without tests will not be merged.
-4. Run `go test ./...` and ensure all tests pass. If any test fails, fix the code or the test before proceeding. Do not open a PR with failing tests.
-5. Open a pull request targeting `main`.
+3. Include tests (see "Testing approach" below). Tests are mandatory.
+4. Run `go test ./...` and ensure all tests pass. If any test fails, fix the code or the test before proceeding.
+5. Commit all changes to the feature branch with a message following the PR title convention.
+
+### Phase 3 - Review and open PR
+
+After implementation is complete, tests pass, and changes are committed:
+1. Present a summary of all changes (files added/modified, what each does).
+2. Wait for the user to review the changes in their editor. If the user requests changes, apply them, re-run tests, and commit before proceeding.
+3. Explicitly ask: "Ready to push and create the PR?"
+4. Do not push or open a PR until the user confirms. If the user declines, ask what needs to change.
+5. Push the branch and open a pull request targeting `main`.
 
 **PR requirements:**
 - **Title** must follow conventional commits: `type: description` (e.g., `feat: add CI workflow rule`, `fix: correct pass rate calculation`, `refactor: extract report formatting`). Allowed types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`.
-- **Description** must include a summary of the design brief (problem, approach, files changed) so the PR is self-contained without reading the full issue thread.
-- **Link** the PR to the originating issue.
+- **Description** must include a summary of the design brief (problem, approach, files changed) so the PR is self-contained without reading the full chat history.
+- **Link** the PR to the originating GitHub issue, if one exists.
 
 ### Handling PR review comments
 
-When the reviewer requests changes on the PR:
+When the user requests changes on the PR (either in chat or via GitHub review comments):
 - Push follow-up commits to the same branch addressing each comment.
-- Do not force-push or squash on the branch — the reviewer needs to see what changed since their review.
-- If a review comment requires a design change (not just a code tweak), post a comment explaining the updated approach before implementing it.
-- After pushing fixes, run `go test ./...` again. Do not mark review comments as resolved if tests fail.
+- Do not force-push or squash on the branch — the user needs to see what changed since their review.
+- If a review comment requires a design change (not just a code tweak), explain the updated approach in chat before implementing it.
+- After pushing fixes, run `go test ./...` again.
 
 ---
 
@@ -93,6 +106,7 @@ Start flat — all `.go` files in the root, all in `package main`:
 
 ```
 .
+├── .claude/            # Claude Code settings
 ├── AGENTS.md
 ├── README.md
 ├── go.mod
