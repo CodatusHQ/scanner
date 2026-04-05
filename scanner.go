@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"sort"
-	"strings"
 )
 
 // Config holds the configuration needed to run a scan.
@@ -35,27 +34,15 @@ func Run(ctx context.Context, cfg Config) error {
 
 	report := GenerateReport(cfg.Org, results)
 
-	owner, repo, err := parseReportRepo(cfg.ReportRepo)
-	if err != nil {
-		return err
-	}
-
 	title := fmt.Sprintf("Codatus — %s Compliance Report", cfg.Org)
-	if err := client.CreateIssue(ctx, owner, repo, title, report); err != nil {
-		return fmt.Errorf("post report to %s: %w", cfg.ReportRepo, err)
+	if err := client.CreateIssue(ctx, cfg.Org, cfg.ReportRepo, title, report); err != nil {
+		return fmt.Errorf("post report to %s/%s: %w", cfg.Org, cfg.ReportRepo, err)
 	}
 
 	log.Printf("report posted to %s", cfg.ReportRepo)
 	return nil
 }
 
-func parseReportRepo(reportRepo string) (string, string, error) {
-	parts := strings.SplitN(reportRepo, "/", 2)
-	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-		return "", "", fmt.Errorf("invalid report repo format %q: expected owner/repo", reportRepo)
-	}
-	return parts[0], parts[1], nil
-}
 
 // Scan lists all non-archived repos in the org and evaluates every rule against each.
 func Scan(ctx context.Context, client GitHubClient, org string) ([]RepoResult, error) {

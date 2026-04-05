@@ -11,7 +11,7 @@ import (
 func main() {
 	org := os.Getenv("CODATUS_ORG")
 	token := os.Getenv("CODATUS_TOKEN")
-	reportRepo := os.Getenv("CODATUS_REPORT_REPO")
+	reportRepo := os.Getenv("CODATUS_REPORT_REPO") // repo name only, org is inferred from CODATUS_ORG
 
 	if org == "" {
 		log.Fatal("CODATUS_ORG is required")
