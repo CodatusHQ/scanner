@@ -18,6 +18,7 @@ type RuleResult struct {
 func AllRules() []Rule {
 	return []Rule{
 		HasRepoDescription{},
+		HasGitignore{},
 	}
 }
 
@@ -27,4 +28,21 @@ type HasRepoDescription struct{}
 func (r HasRepoDescription) Name() string { return "Has repo description" }
 func (r HasRepoDescription) Check(repo Repo) bool {
 	return strings.TrimSpace(repo.Description) != ""
+}
+
+// HasGitignore checks that a .gitignore file exists in the repo root.
+type HasGitignore struct{}
+
+func (r HasGitignore) Name() string { return "Has .gitignore" }
+func (r HasGitignore) Check(repo Repo) bool {
+	return hasFile(repo.Files, ".gitignore")
+}
+
+func hasFile(files []string, name string) bool {
+	for _, f := range files {
+		if f == name {
+			return true
+		}
+	}
+	return false
 }
