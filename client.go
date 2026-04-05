@@ -8,20 +8,26 @@ import (
 	"net/http"
 )
 
+// FileEntry represents a file or directory in a repo's root.
+type FileEntry struct {
+	Name string
+	Size int
+}
+
 // Repo represents a GitHub repository with the fields the scanner needs.
 type Repo struct {
 	Name          string
 	Description   string
 	DefaultBranch string
 	Archived      bool
-	Files         []string // root-level file and directory names
+	Files         []FileEntry // root-level file and directory entries
 }
 
 // GitHubClient is the interface for all GitHub API interactions.
 // The scanner depends only on this interface, making it testable via mocks.
 type GitHubClient interface {
 	ListRepos(ctx context.Context, org string) ([]Repo, error)
-	ListFiles(ctx context.Context, owner, repo string) ([]string, error)
+	ListFiles(ctx context.Context, owner, repo string) ([]FileEntry, error)
 	CreateIssue(ctx context.Context, owner, repo, title, body string) error
 }
 
@@ -102,21 +108,22 @@ func (c *realGitHubClient) ListRepos(ctx context.Context, org string) ([]Repo, e
 	return allRepos, nil
 }
 
-func (c *realGitHubClient) ListFiles(ctx context.Context, owner, repo string) ([]string, error) {
+func (c *realGitHubClient) ListFiles(ctx context.Context, owner, repo string) ([]FileEntry, error) {
 	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/contents", owner, repo)
 
 	var entries []struct {
 		Name string `json:"name"`
+		Size int    `json:"size"`
 	}
 	if err := c.doRequest(ctx, url, &entries); err != nil {
 		return nil, fmt.Errorf("list files for %s/%s: %w", owner, repo, err)
 	}
 
-	names := make([]string, len(entries))
+	files := make([]FileEntry, len(entries))
 	for i, e := range entries {
-		names[i] = e.Name
+		files[i] = FileEntry{Name: e.Name, Size: e.Size}
 	}
-	return names, nil
+	return files, nil
 }
 
 func (c *realGitHubClient) CreateIssue(ctx context.Context, owner, repo, title, body string) error {
