@@ -4,8 +4,13 @@ import "context"
 
 // MockGitHubClient implements GitHubClient with canned responses for testing.
 type MockGitHubClient struct {
-	Repos []Repo
-	Err   error
+	Repos    []Repo
+	Err      error
+	IssueErr error
+	// CreatedIssue records the last CreateIssue call for assertions.
+	CreatedIssue struct {
+		Owner, Repo, Title, Body string
+	}
 }
 
 func (m *MockGitHubClient) ListRepos(ctx context.Context, org string) ([]Repo, error) {
@@ -14,4 +19,12 @@ func (m *MockGitHubClient) ListRepos(ctx context.Context, org string) ([]Repo, e
 
 func (m *MockGitHubClient) ListFiles(ctx context.Context, owner, repo string) ([]string, error) {
 	return nil, nil
+}
+
+func (m *MockGitHubClient) CreateIssue(ctx context.Context, owner, repo, title, body string) error {
+	m.CreatedIssue.Owner = owner
+	m.CreatedIssue.Repo = repo
+	m.CreatedIssue.Title = title
+	m.CreatedIssue.Body = body
+	return m.IssueErr
 }

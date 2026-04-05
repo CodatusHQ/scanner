@@ -1,6 +1,7 @@
 package scanner
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -20,6 +21,7 @@ type Repo struct {
 type GitHubClient interface {
 	ListRepos(ctx context.Context, org string) ([]Repo, error)
 	ListFiles(ctx context.Context, owner, repo string) ([]string, error)
+	CreateIssue(ctx context.Context, owner, repo, title, body string) error
 }
 
 type realGitHubClient struct {
@@ -102,4 +104,38 @@ func (c *realGitHubClient) ListRepos(ctx context.Context, org string) ([]Repo, e
 func (c *realGitHubClient) ListFiles(ctx context.Context, owner, repo string) ([]string, error) {
 	// TODO: implement when file-existence rules are added
 	return nil, nil
+}
+
+func (c *realGitHubClient) CreateIssue(ctx context.Context, owner, repo, title, body string) error {
+	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/issues", owner, repo)
+
+	payload := struct {
+		Title string `json:"title"`
+		Body  string `json:"body"`
+	}{Title: title, Body: body}
+
+	jsonBody, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshal issue payload: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(jsonBody))
+	if err != nil {
+		return fmt.Errorf("create request for %s: %w", url, err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("request %s: %w", url, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		return fmt.Errorf("create issue in %s/%s: status %d", owner, repo, resp.StatusCode)
+	}
+
+	return nil
 }

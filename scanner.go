@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"sort"
+	"strings"
 )
 
 // Config holds the configuration needed to run a scan.
@@ -20,8 +21,8 @@ type RepoResult struct {
 	Results  []RuleResult
 }
 
-// Run is the high-level entry point. It constructs a client, scans, and
-// (in the future) posts the report.
+// Run is the high-level entry point. It constructs a client, scans the org,
+// generates a Markdown report, and posts it as a GitHub Issue.
 func Run(ctx context.Context, cfg Config) error {
 	client := NewGitHubClient(cfg.Token)
 
@@ -32,10 +33,28 @@ func Run(ctx context.Context, cfg Config) error {
 
 	log.Printf("scanned %d repos in org %s", len(results), cfg.Org)
 
-	// TODO: generate report and post as GitHub issue to cfg.ReportRepo
-	_ = results
+	report := GenerateReport(cfg.Org, results)
 
+	owner, repo, err := parseReportRepo(cfg.ReportRepo)
+	if err != nil {
+		return err
+	}
+
+	title := fmt.Sprintf("Codatus — %s Compliance Report", cfg.Org)
+	if err := client.CreateIssue(ctx, owner, repo, title, report); err != nil {
+		return fmt.Errorf("post report to %s: %w", cfg.ReportRepo, err)
+	}
+
+	log.Printf("report posted to %s", cfg.ReportRepo)
 	return nil
+}
+
+func parseReportRepo(reportRepo string) (string, string, error) {
+	parts := strings.SplitN(reportRepo, "/", 2)
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return "", "", fmt.Errorf("invalid report repo format %q: expected owner/repo", reportRepo)
+	}
+	return parts[0], parts[1], nil
 }
 
 // Scan lists all non-archived repos in the org and evaluates every rule against each.
