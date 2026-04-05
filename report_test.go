@@ -24,7 +24,7 @@ func TestGenerateReport_Structure(t *testing.T) {
 	report := GenerateReport("test-org", results)
 
 	// Header
-	if !strings.Contains(report, "# Codatus — Org Compliance Report") {
+	if !strings.Contains(report, "# Codatus - Org Compliance Report") {
 		t.Error("missing report title")
 	}
 	if !strings.Contains(report, "**Org:** test-org") {

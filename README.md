@@ -20,7 +20,7 @@ No dashboard. No database. No setup beyond installing the GitHub App. Scan, repo
 
 ## Rules
 
-Each rule produces a **pass** or **fail** result per repository. There are no scores, weights, or severity levels — just pass/fail.
+Each rule produces a **pass** or **fail** result per repository. There are no scores, weights, or severity levels - just pass/fail.
 
 ### Repo basics
 
@@ -93,14 +93,14 @@ Each rule produces a **pass** or **fail** result per repository. There are no sc
 
 #### 10. Has required reviewers
 
-**Check:** the default branch's branch protection rules require at least one approving review before merging (via the GitHub API — `required_pull_request_reviews.required_approving_review_count >= 1`).
+**Check:** the default branch's branch protection rules require at least one approving review before merging (via the GitHub API - `required_pull_request_reviews.required_approving_review_count >= 1`).
 
 **Pass:** required reviewers is set to 1 or more.
 **Fail:** required reviewers is not configured, or set to 0, or branch protection is not enabled.
 
 #### 11. Requires status checks before merging
 
-**Check:** the default branch's branch protection rules require at least one status check to pass before merging (via the GitHub API — `required_status_checks` is configured with one or more contexts).
+**Check:** the default branch's branch protection rules require at least one status check to pass before merging (via the GitHub API - `required_status_checks` is configured with one or more contexts).
 
 **Pass:** at least one required status check is configured.
 **Fail:** required status checks are not configured, or the list of required contexts is empty, or branch protection is not enabled.
@@ -112,7 +112,7 @@ Each rule produces a **pass** or **fail** result per repository. There are no sc
 The report is a single Markdown document posted as a GitHub Issue. Structure:
 
 ```
-# Codatus — Org Compliance Report
+# Codatus - Org Compliance Report
 
 **Org:** {org_name}
 **Scanned:** {timestamp}

@@ -13,7 +13,7 @@ Domain specification (rules, report structure) lives in `README.md`.
 
 ## Operating protocol (must follow)
 
-This protocol assumes you are running inside the Claude Code VS Code extension, interacting with the user directly in chat. All communication (design briefs, questions, approvals) happens in the chat — not via GitHub issue comments.
+This protocol assumes you are running inside the Claude Code VS Code extension, interacting with the user directly in chat. All communication (design briefs, questions, approvals) happens in the chat - not via GitHub issue comments.
 
 ### Phase 1 - Clarify and design (no code)
 
@@ -67,7 +67,7 @@ After design approval:
 2. Implement the full approved design.
 3. Include tests (see "Testing approach" below). Tests are mandatory.
 4. Run `go test ./...` and ensure all tests pass. If any test fails, fix the code or the test before proceeding.
-5. Do not commit yet — leave changes uncommitted so the user can review the diff in their IDE.
+5. Do not commit yet - leave changes uncommitted so the user can review the diff in their IDE.
 
 ### Phase 3 - Review, commit, and open PR
 
@@ -88,7 +88,7 @@ After implementation is complete and tests pass:
 
 When the user requests changes on the PR (either in chat or via GitHub review comments):
 - Push follow-up commits to the same branch addressing each comment.
-- Do not force-push or squash on the branch — the user needs to see what changed since their review.
+- Do not force-push or squash on the branch - the user needs to see what changed since their review.
 - If a review comment requires a design change (not just a code tweak), explain the updated approach in chat before implementing it.
 - After pushing fixes, run `go test ./...` again.
 
@@ -130,8 +130,9 @@ The scanner is an importable Go package (`package scanner`) at the module root. 
 ## Go style preferences
 
 ### General
+- Never use em dashes (-). Use simple hyphens (-) everywhere - in code, comments, docs, and reports.
 - Concise, explicit code. No clever abstractions.
-- Flat control flow — early returns, avoid deep nesting.
+- Flat control flow - early returns, avoid deep nesting.
 - Errors are values. Wrap with context: `fmt.Errorf("scan repo %s: %w", name, err)`.
 - No `panic` except in truly unrecoverable startup failures.
 - Log with `log.Printf` / `log.Fatalf` (standard library). No structured logging libraries yet.
@@ -144,7 +145,7 @@ The scanner is an importable Go package (`package scanner`) at the module root. 
 ### Naming
 - Follow Go conventions: `MixedCase` for exported, `mixedCase` for unexported.
 - Interfaces named by what they do: `RepoLister`, `FileChecker`, not `IClient` or `ClientInterface`.
-- The main GitHub interface is `GitHubClient` (exception to the verb rule — it's the central abstraction).
+- The main GitHub interface is `GitHubClient` (exception to the verb rule - it's the central abstraction).
 
 ---
 
@@ -212,14 +213,14 @@ Report generation tests must verify the Markdown output matches expected structu
 
 ## Do-s
 - Prefer concise, explicit code over clever abstractions.
-- Validate required inputs up front in `main()` — fail fast with actionable messages.
-- Use `context.Context` for GitHub API calls — respect cancellation and timeouts.
+- Validate required inputs up front in `main()` - fail fast with actionable messages.
+- Use `context.Context` for GitHub API calls - respect cancellation and timeouts.
 - Keep the `GitHubClient` interface narrow. Only add methods when a rule actually needs them.
-- Handle GitHub API rate limits gracefully — log remaining quota, fail clearly when exhausted.
+- Handle GitHub API rate limits gracefully - log remaining quota, fail clearly when exhausted.
 
 ## Don't-s
 - Don't add abstractions until they're needed by real code (no speculative interfaces or generic helpers).
-- Don't write huge functions — if a function exceeds ~40 lines, it probably does too much.
+- Don't write huge functions - if a function exceeds ~40 lines, it probably does too much.
 - Don't log secrets (tokens, private repo contents).
 - Don't ignore errors. Every `err` must be checked.
 - Don't reach for external packages when the standard library suffices.
