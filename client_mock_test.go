@@ -6,8 +6,8 @@ import "context"
 type MockGitHubClient struct {
 	Repos    []Repo
 	Err      error
-	Files    map[string][]FileEntry // repo name -> file entries
-	FilesErr error
+	Tree     map[string][]FileEntry // repo name -> file entries
+	TreeErr  error
 	IssueErr error
 	// CreatedIssue records the last CreateIssue call for assertions.
 	CreatedIssue struct {
@@ -19,12 +19,12 @@ func (m *MockGitHubClient) ListRepos(ctx context.Context, org string) ([]Repo, e
 	return m.Repos, m.Err
 }
 
-func (m *MockGitHubClient) ListFiles(ctx context.Context, owner, repo string) ([]FileEntry, error) {
-	if m.FilesErr != nil {
-		return nil, m.FilesErr
+func (m *MockGitHubClient) GetTree(ctx context.Context, owner, repo, branch string) ([]FileEntry, error) {
+	if m.TreeErr != nil {
+		return nil, m.TreeErr
 	}
-	if m.Files != nil {
-		return m.Files[repo], nil
+	if m.Tree != nil {
+		return m.Tree[repo], nil
 	}
 	return nil, nil
 }

@@ -8,10 +8,11 @@ import (
 	"net/http"
 )
 
-// FileEntry represents a file or directory in a repo's root.
+// FileEntry represents a file or directory in a repo.
 type FileEntry struct {
-	Name string
+	Path string // full path relative to repo root (e.g., ".github/workflows/ci.yml")
 	Size int
+	Type string // "blob" (file) or "tree" (directory)
 }
 
 // Repo represents a GitHub repository with the fields the scanner needs.
@@ -20,14 +21,14 @@ type Repo struct {
 	Description   string
 	DefaultBranch string
 	Archived      bool
-	Files         []FileEntry // root-level file and directory entries
+	Files         []FileEntry // all files and directories in the repo
 }
 
 // GitHubClient is the interface for all GitHub API interactions.
 // The scanner depends only on this interface, making it testable via mocks.
 type GitHubClient interface {
 	ListRepos(ctx context.Context, org string) ([]Repo, error)
-	ListFiles(ctx context.Context, owner, repo string) ([]FileEntry, error)
+	GetTree(ctx context.Context, owner, repo, branch string) ([]FileEntry, error)
 	CreateIssue(ctx context.Context, owner, repo, title, body string) error
 }
 
@@ -108,20 +109,23 @@ func (c *realGitHubClient) ListRepos(ctx context.Context, org string) ([]Repo, e
 	return allRepos, nil
 }
 
-func (c *realGitHubClient) ListFiles(ctx context.Context, owner, repo string) ([]FileEntry, error) {
-	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/contents", owner, repo)
+func (c *realGitHubClient) GetTree(ctx context.Context, owner, repo, branch string) ([]FileEntry, error) {
+	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/git/trees/%s?recursive=1", owner, repo, branch)
 
-	var entries []struct {
-		Name string `json:"name"`
-		Size int    `json:"size"`
+	var result struct {
+		Tree []struct {
+			Path string `json:"path"`
+			Type string `json:"type"`
+			Size int    `json:"size"`
+		} `json:"tree"`
 	}
-	if err := c.doRequest(ctx, url, &entries); err != nil {
-		return nil, fmt.Errorf("list files for %s/%s: %w", owner, repo, err)
+	if err := c.doRequest(ctx, url, &result); err != nil {
+		return nil, fmt.Errorf("get tree for %s/%s: %w", owner, repo, err)
 	}
 
-	files := make([]FileEntry, len(entries))
-	for i, e := range entries {
-		files[i] = FileEntry{Name: e.Name, Size: e.Size}
+	files := make([]FileEntry, len(result.Tree))
+	for i, e := range result.Tree {
+		files[i] = FileEntry{Path: e.Path, Type: e.Type, Size: e.Size}
 	}
 	return files, nil
 }
