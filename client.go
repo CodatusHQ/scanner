@@ -15,13 +15,20 @@ type FileEntry struct {
 	Type string // "blob" (file) or "tree" (directory)
 }
 
+// BranchProtection holds the branch protection settings the scanner needs.
+type BranchProtection struct {
+	RequiredReviewers    int
+	RequiredStatusChecks []string
+}
+
 // Repo represents a GitHub repository with the fields the scanner needs.
 type Repo struct {
-	Name          string
-	Description   string
-	DefaultBranch string
-	Archived      bool
-	Files         []FileEntry // all files and directories in the repo
+	Name             string
+	Description      string
+	DefaultBranch    string
+	Archived         bool
+	Files            []FileEntry       // all files and directories in the repo
+	BranchProtection *BranchProtection // nil if no protection configured
 }
 
 // GitHubClient is the interface for all GitHub API interactions.
@@ -29,6 +36,7 @@ type Repo struct {
 type GitHubClient interface {
 	ListRepos(ctx context.Context, org string) ([]Repo, error)
 	GetTree(ctx context.Context, owner, repo, branch string) ([]FileEntry, error)
+	GetBranchProtection(ctx context.Context, owner, repo, branch string) (*BranchProtection, error)
 	CreateIssue(ctx context.Context, owner, repo, title, body string) error
 }
 
@@ -128,6 +136,51 @@ func (c *realGitHubClient) GetTree(ctx context.Context, owner, repo, branch stri
 		files[i] = FileEntry{Path: e.Path, Type: e.Type, Size: e.Size}
 	}
 	return files, nil
+}
+
+func (c *realGitHubClient) GetBranchProtection(ctx context.Context, owner, repo, branch string) (*BranchProtection, error) {
+	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/branches/%s/protection", owner, repo, branch)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create request for %s: %w", url, err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request %s: %w", url, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, nil
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("get branch protection for %s/%s: status %d", owner, repo, resp.StatusCode)
+	}
+
+	var result struct {
+		RequiredPullRequestReviews *struct {
+			RequiredApprovingReviewCount int `json:"required_approving_review_count"`
+		} `json:"required_pull_request_reviews"`
+		RequiredStatusChecks *struct {
+			Contexts []string `json:"contexts"`
+		} `json:"required_status_checks"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode branch protection for %s/%s: %w", owner, repo, err)
+	}
+
+	bp := &BranchProtection{}
+	if result.RequiredPullRequestReviews != nil {
+		bp.RequiredReviewers = result.RequiredPullRequestReviews.RequiredApprovingReviewCount
+	}
+	if result.RequiredStatusChecks != nil {
+		bp.RequiredStatusChecks = result.RequiredStatusChecks.Contexts
+	}
+	return bp, nil
 }
 
 func (c *realGitHubClient) CreateIssue(ctx context.Context, owner, repo, title, body string) error {

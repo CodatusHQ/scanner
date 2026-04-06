@@ -211,3 +211,69 @@ func TestHasCodeowners_Fail(t *testing.T) {
 		t.Error("expected fail when CODEOWNERS is missing from all locations")
 	}
 }
+
+func TestHasBranchProtection_Pass(t *testing.T) {
+	rule := HasBranchProtection{}
+
+	if !rule.Check(Repo{BranchProtection: &BranchProtection{}}) {
+		t.Error("expected pass when branch protection is enabled")
+	}
+}
+
+func TestHasBranchProtection_Fail(t *testing.T) {
+	rule := HasBranchProtection{}
+
+	if rule.Check(Repo{BranchProtection: nil}) {
+		t.Error("expected fail when branch protection is nil")
+	}
+}
+
+func TestHasRequiredReviewers_Pass(t *testing.T) {
+	rule := HasRequiredReviewers{}
+
+	if !rule.Check(Repo{BranchProtection: &BranchProtection{RequiredReviewers: 1}}) {
+		t.Error("expected pass when required reviewers >= 1")
+	}
+}
+
+func TestHasRequiredReviewers_Fail_Zero(t *testing.T) {
+	rule := HasRequiredReviewers{}
+
+	if rule.Check(Repo{BranchProtection: &BranchProtection{RequiredReviewers: 0}}) {
+		t.Error("expected fail when required reviewers is 0")
+	}
+}
+
+func TestHasRequiredReviewers_Fail_NoProtection(t *testing.T) {
+	rule := HasRequiredReviewers{}
+
+	if rule.Check(Repo{BranchProtection: nil}) {
+		t.Error("expected fail when branch protection is nil")
+	}
+}
+
+func TestHasRequiredStatusChecks_Pass(t *testing.T) {
+	rule := HasRequiredStatusChecks{}
+
+	bp := &BranchProtection{RequiredStatusChecks: []string{"ci/build"}}
+	if !rule.Check(Repo{BranchProtection: bp}) {
+		t.Error("expected pass when status checks are configured")
+	}
+}
+
+func TestHasRequiredStatusChecks_Fail_Empty(t *testing.T) {
+	rule := HasRequiredStatusChecks{}
+
+	bp := &BranchProtection{RequiredStatusChecks: []string{}}
+	if rule.Check(Repo{BranchProtection: bp}) {
+		t.Error("expected fail when status checks list is empty")
+	}
+}
+
+func TestHasRequiredStatusChecks_Fail_NoProtection(t *testing.T) {
+	rule := HasRequiredStatusChecks{}
+
+	if rule.Check(Repo{BranchProtection: nil}) {
+		t.Error("expected fail when branch protection is nil")
+	}
+}

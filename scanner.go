@@ -65,6 +65,12 @@ func Scan(ctx context.Context, client GitHubClient, org string) ([]RepoResult, e
 		}
 		repo.Files = files
 
+		protection, err := client.GetBranchProtection(ctx, org, repo.Name, repo.DefaultBranch)
+		if err != nil {
+			return nil, fmt.Errorf("get branch protection for repo %s: %w", repo.Name, err)
+		}
+		repo.BranchProtection = protection
+
 		rr := RepoResult{RepoName: repo.Name}
 		for _, rule := range rules {
 			rr.Results = append(rr.Results, RuleResult{

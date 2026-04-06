@@ -27,6 +27,9 @@ func AllRules() []Rule {
 		HasCIWorkflow{},
 		HasTestDirectory{},
 		HasCodeowners{},
+		HasBranchProtection{},
+		HasRequiredReviewers{},
+		HasRequiredStatusChecks{},
 	}
 }
 
@@ -107,6 +110,30 @@ func (r HasCodeowners) Check(repo Repo) bool {
 	return hasFile(repo.Files, "CODEOWNERS") ||
 		hasFile(repo.Files, "docs/CODEOWNERS") ||
 		hasFile(repo.Files, ".github/CODEOWNERS")
+}
+
+// HasBranchProtection checks that the default branch has protection rules enabled.
+type HasBranchProtection struct{}
+
+func (r HasBranchProtection) Name() string { return "Has branch protection" }
+func (r HasBranchProtection) Check(repo Repo) bool {
+	return repo.BranchProtection != nil
+}
+
+// HasRequiredReviewers checks that at least one approving review is required.
+type HasRequiredReviewers struct{}
+
+func (r HasRequiredReviewers) Name() string { return "Has required reviewers" }
+func (r HasRequiredReviewers) Check(repo Repo) bool {
+	return repo.BranchProtection != nil && repo.BranchProtection.RequiredReviewers >= 1
+}
+
+// HasRequiredStatusChecks checks that at least one status check is required before merging.
+type HasRequiredStatusChecks struct{}
+
+func (r HasRequiredStatusChecks) Name() string { return "Requires status checks before merging" }
+func (r HasRequiredStatusChecks) Check(repo Repo) bool {
+	return repo.BranchProtection != nil && len(repo.BranchProtection.RequiredStatusChecks) > 0
 }
 
 func findFile(files []FileEntry, path string) (FileEntry, bool) {
