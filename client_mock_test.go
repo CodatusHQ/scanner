@@ -6,10 +6,12 @@ import "context"
 type MockGitHubClient struct {
 	Repos         []Repo
 	Err           error
-	Tree          map[string][]FileEntry        // repo name -> file entries
+	Tree          map[string][]FileEntry       // repo name -> file entries
 	TreeErr       error
-	Protection    map[string]*BranchProtection   // repo name -> branch protection
+	Protection    map[string]*BranchProtection  // repo name -> classic branch protection
 	ProtectionErr error
+	Rulesets      map[string]*BranchProtection  // repo name -> rulesets protection
+	RulesetsErr   error
 	IssueErr      error
 	// CreatedIssue records the last CreateIssue call for assertions.
 	CreatedIssue struct {
@@ -37,6 +39,16 @@ func (m *MockGitHubClient) GetBranchProtection(ctx context.Context, owner, repo,
 	}
 	if m.Protection != nil {
 		return m.Protection[repo], nil
+	}
+	return nil, nil
+}
+
+func (m *MockGitHubClient) GetRulesets(ctx context.Context, owner, repo, branch string) (*BranchProtection, error) {
+	if m.RulesetsErr != nil {
+		return nil, m.RulesetsErr
+	}
+	if m.Rulesets != nil {
+		return m.Rulesets[repo], nil
 	}
 	return nil, nil
 }

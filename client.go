@@ -37,6 +37,7 @@ type GitHubClient interface {
 	ListRepos(ctx context.Context, org string) ([]Repo, error)
 	GetTree(ctx context.Context, owner, repo, branch string) ([]FileEntry, error)
 	GetBranchProtection(ctx context.Context, owner, repo, branch string) (*BranchProtection, error)
+	GetRulesets(ctx context.Context, owner, repo, branch string) (*BranchProtection, error)
 	CreateIssue(ctx context.Context, owner, repo, title, body string) error
 }
 
@@ -181,6 +182,49 @@ func (c *realGitHubClient) GetBranchProtection(ctx context.Context, owner, repo,
 		bp.RequiredStatusChecks = result.RequiredStatusChecks.Contexts
 	}
 	return bp, nil
+}
+
+func (c *realGitHubClient) GetRulesets(ctx context.Context, owner, repo, branch string) (*BranchProtection, error) {
+	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/rules/branches/%s", owner, repo, branch)
+
+	var rules []struct {
+		Type       string `json:"type"`
+		Parameters *struct {
+			RequiredApprovingReviewCount int `json:"required_approving_review_count"`
+			RequiredStatusChecks         []struct {
+				Context string `json:"context"`
+			} `json:"required_status_checks"`
+		} `json:"parameters"`
+	}
+	if err := c.doRequest(ctx, url, &rules); err != nil {
+		return nil, fmt.Errorf("get branch rules for %s/%s: %w", owner, repo, err)
+	}
+
+	var bp BranchProtection
+	found := false
+
+	for _, rule := range rules {
+		if rule.Parameters == nil {
+			continue
+		}
+		switch rule.Type {
+		case "pull_request":
+			found = true
+			if rule.Parameters.RequiredApprovingReviewCount > bp.RequiredReviewers {
+				bp.RequiredReviewers = rule.Parameters.RequiredApprovingReviewCount
+			}
+		case "required_status_checks":
+			found = true
+			for _, sc := range rule.Parameters.RequiredStatusChecks {
+				bp.RequiredStatusChecks = append(bp.RequiredStatusChecks, sc.Context)
+			}
+		}
+	}
+
+	if !found {
+		return nil, nil
+	}
+	return &bp, nil
 }
 
 func (c *realGitHubClient) CreateIssue(ctx context.Context, owner, repo, title, body string) error {

@@ -95,3 +95,52 @@ func TestScan_PropagatesClientError(t *testing.T) {
 		t.Fatal("expected error, got nil")
 	}
 }
+
+func TestScan_UsesRulesetsWhenAvailable(t *testing.T) {
+	client := &MockGitHubClient{
+		Repos: []Repo{
+			{Name: "modern-repo", Description: "Uses rulesets", DefaultBranch: "main"},
+		},
+		Rulesets: map[string]*BranchProtection{
+			"modern-repo": {RequiredReviewers: 2},
+		},
+		Protection: map[string]*BranchProtection{
+			"modern-repo": {RequiredReviewers: 1},
+		},
+	}
+
+	results, err := Scan(context.Background(), client, "test-org")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should use rulesets (2 reviewers), not classic (1 reviewer)
+	for _, r := range results[0].Results {
+		if r.RuleName == "Has required reviewers" && !r.Passed {
+			t.Error("expected pass from rulesets")
+		}
+	}
+}
+
+func TestScan_FallsBackToClassicProtection(t *testing.T) {
+	client := &MockGitHubClient{
+		Repos: []Repo{
+			{Name: "legacy-repo", Description: "Uses classic", DefaultBranch: "main"},
+		},
+		// No rulesets - returns nil
+		Protection: map[string]*BranchProtection{
+			"legacy-repo": {RequiredReviewers: 1},
+		},
+	}
+
+	results, err := Scan(context.Background(), client, "test-org")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	for _, r := range results[0].Results {
+		if r.RuleName == "Has branch protection" && !r.Passed {
+			t.Error("expected pass from classic branch protection fallback")
+		}
+	}
+}
