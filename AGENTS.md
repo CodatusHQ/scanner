@@ -83,6 +83,8 @@ After implementation is complete and tests pass:
 - **Title** must follow conventional commits: `type: description` (e.g., `feat: add CI workflow rule`, `fix: correct pass rate calculation`, `refactor: extract report formatting`). Allowed types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`.
 - **Description** must include a summary of the design brief (problem, approach, files changed) so the PR is self-contained without reading the full chat history.
 - **Link** the PR to the originating GitHub issue, if one exists.
+- **Do not** add `Co-Authored-By` trailers to commits.
+- **Do not** add "Generated with Claude Code" or similar AI attribution footers to PR descriptions.
 
 ### Handling PR review comments
 
