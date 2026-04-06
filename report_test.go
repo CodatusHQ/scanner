@@ -1,120 +1,215 @@
 package scanner
 
 import (
-	"strings"
 	"testing"
+	"time"
 )
 
-func TestGenerateReport_Structure(t *testing.T) {
+var testTime = time.Date(2026, 4, 5, 12, 0, 0, 0, time.UTC)
+
+func TestGenerateReport_MixedCompliance(t *testing.T) {
 	results := []RepoResult{
-		{
-			RepoName: "alpha",
-			Results: []RuleResult{
-				{RuleName: "Has repo description", Passed: true},
-			},
-		},
-		{
-			RepoName: "beta",
-			Results: []RuleResult{
-				{RuleName: "Has repo description", Passed: false},
-			},
-		},
+		{RepoName: "alpha", Results: []RuleResult{
+			{RuleName: "Has repo description", Passed: true},
+			{RuleName: "Has .gitignore", Passed: true},
+		}},
+		{RepoName: "beta", Results: []RuleResult{
+			{RuleName: "Has repo description", Passed: false},
+			{RuleName: "Has .gitignore", Passed: true},
+		}},
 	}
 
-	report := GenerateReport("test-org", results)
+	got := generateReport("test-org", results, testTime)
 
-	// Header
-	if !strings.Contains(report, "# Codatus - Org Compliance Report") {
-		t.Error("missing report title")
-	}
-	if !strings.Contains(report, "**Org:** test-org") {
-		t.Error("missing org name")
-	}
-	if !strings.Contains(report, "**Repos scanned:** 2") {
-		t.Error("missing repo count")
-	}
+	want := `# Codatus - Org Compliance Report
 
-	// Summary table
-	if !strings.Contains(report, "## Summary") {
-		t.Error("missing summary section")
-	}
-	if !strings.Contains(report, "| Has repo description | 1 | 1 | 50% |") {
-		t.Error("missing or incorrect summary row")
-	}
+**Org:** test-org
+**Scanned:** 2026-04-05 12:00 UTC
+**Repos scanned:** 2
+**Compliant:** 1/2 (50%)
 
-	// Per-repo tables
-	if !strings.Contains(report, "### alpha") {
-		t.Error("missing alpha repo section")
-	}
-	if !strings.Contains(report, "### beta") {
-		t.Error("missing beta repo section")
+## Summary
+
+| Rule | Passing | Failing | Pass rate |
+|------|---------|---------|----------|
+| Has repo description | 1 | 1 | 50% |
+| Has .gitignore | 2 | 0 | 100% |
+
+## ✅ Fully compliant (1 repo)
+
+<details>
+<summary>All rules passing</summary>
+
+[alpha](https://github.com/test-org/alpha)
+
+</details>
+
+## ❌ Non-compliant (1 repo)
+
+<details>
+<summary><a href="https://github.com/test-org/beta">beta</a> - 1 failing</summary>
+
+- Has repo description
+
+</details>
+
+`
+	if got != want {
+		t.Errorf("report mismatch.\n\nGOT:\n%s\n\nWANT:\n%s", got, want)
 	}
 }
 
-func TestGenerateReport_PassFailIcons(t *testing.T) {
+func TestGenerateReport_AllCompliant(t *testing.T) {
 	results := []RepoResult{
-		{
-			RepoName: "my-repo",
-			Results: []RuleResult{
-				{RuleName: "Has repo description", Passed: true},
-			},
-		},
+		{RepoName: "alpha", Results: []RuleResult{{RuleName: "Rule A", Passed: true}}},
+		{RepoName: "beta", Results: []RuleResult{{RuleName: "Rule A", Passed: true}}},
 	}
 
-	report := GenerateReport("test-org", results)
+	got := generateReport("my-org", results, testTime)
 
-	if !strings.Contains(report, "| Has repo description | ✅ |") {
-		t.Error("expected ✅ for passing rule")
+	want := `# Codatus - Org Compliance Report
+
+**Org:** my-org
+**Scanned:** 2026-04-05 12:00 UTC
+**Repos scanned:** 2
+**Compliant:** 2/2 (100%)
+
+## Summary
+
+| Rule | Passing | Failing | Pass rate |
+|------|---------|---------|----------|
+| Rule A | 2 | 0 | 100% |
+
+## ✅ Fully compliant (2 repos)
+
+<details>
+<summary>All rules passing</summary>
+
+[alpha](https://github.com/my-org/alpha)
+[beta](https://github.com/my-org/beta)
+
+</details>
+`
+	if got != want {
+		t.Errorf("report mismatch.\n\nGOT:\n%s\n\nWANT:\n%s", got, want)
+	}
+}
+
+func TestGenerateReport_AllNonCompliant(t *testing.T) {
+	results := []RepoResult{
+		{RepoName: "repo-1", Results: []RuleResult{
+			{RuleName: "Rule A", Passed: false},
+			{RuleName: "Rule B", Passed: false},
+		}},
+		{RepoName: "repo-2", Results: []RuleResult{
+			{RuleName: "Rule A", Passed: true},
+			{RuleName: "Rule B", Passed: false},
+		}},
 	}
 
-	results[0].Results[0].Passed = false
-	report = GenerateReport("test-org", results)
+	got := generateReport("test-org", results, testTime)
 
-	if !strings.Contains(report, "| Has repo description | ❌ |") {
-		t.Error("expected ❌ for failing rule")
+	want := `# Codatus - Org Compliance Report
+
+**Org:** test-org
+**Scanned:** 2026-04-05 12:00 UTC
+**Repos scanned:** 2
+**Compliant:** 0/2 (0%)
+
+## Summary
+
+| Rule | Passing | Failing | Pass rate |
+|------|---------|---------|----------|
+| Rule B | 0 | 2 | 0% |
+| Rule A | 1 | 1 | 50% |
+
+## ❌ Non-compliant (2 repos)
+
+<details>
+<summary><a href="https://github.com/test-org/repo-1">repo-1</a> - 2 failing</summary>
+
+- Rule A
+- Rule B
+
+</details>
+
+<details>
+<summary><a href="https://github.com/test-org/repo-2">repo-2</a> - 1 failing</summary>
+
+- Rule B
+
+</details>
+
+`
+	if got != want {
+		t.Errorf("report mismatch.\n\nGOT:\n%s\n\nWANT:\n%s", got, want)
 	}
 }
 
 func TestGenerateReport_SummarySortedByPassRateAscending(t *testing.T) {
 	results := []RepoResult{
-		{
-			RepoName: "repo-1",
-			Results: []RuleResult{
-				{RuleName: "Rule A", Passed: true},
-				{RuleName: "Rule B", Passed: false},
-			},
-		},
-		{
-			RepoName: "repo-2",
-			Results: []RuleResult{
-				{RuleName: "Rule A", Passed: true},
-				{RuleName: "Rule B", Passed: true},
-			},
-		},
+		{RepoName: "repo-1", Results: []RuleResult{
+			{RuleName: "Rule A", Passed: true},
+			{RuleName: "Rule B", Passed: false},
+		}},
+		{RepoName: "repo-2", Results: []RuleResult{
+			{RuleName: "Rule A", Passed: true},
+			{RuleName: "Rule B", Passed: true},
+		}},
 	}
 
-	report := GenerateReport("test-org", results)
+	got := generateReport("test-org", results, testTime)
 
-	// Rule B: 1 pass / 2 repos = 50%. Rule A: 2 pass / 2 repos = 100%.
-	// Sorted ascending: Rule B first, then Rule A.
-	posB := strings.Index(report, "| Rule B |")
-	posA := strings.Index(report, "| Rule A |")
+	want := `# Codatus - Org Compliance Report
 
-	if posB == -1 || posA == -1 {
-		t.Fatal("missing rule rows in summary")
-	}
-	if posB > posA {
-		t.Error("expected Rule B (50%) before Rule A (100%) in summary")
+**Org:** test-org
+**Scanned:** 2026-04-05 12:00 UTC
+**Repos scanned:** 2
+**Compliant:** 1/2 (50%)
+
+## Summary
+
+| Rule | Passing | Failing | Pass rate |
+|------|---------|---------|----------|
+| Rule B | 1 | 1 | 50% |
+| Rule A | 2 | 0 | 100% |
+
+## ✅ Fully compliant (1 repo)
+
+<details>
+<summary>All rules passing</summary>
+
+[repo-2](https://github.com/test-org/repo-2)
+
+</details>
+
+## ❌ Non-compliant (1 repo)
+
+<details>
+<summary><a href="https://github.com/test-org/repo-1">repo-1</a> - 1 failing</summary>
+
+- Rule B
+
+</details>
+
+`
+	if got != want {
+		t.Errorf("report mismatch.\n\nGOT:\n%s\n\nWANT:\n%s", got, want)
 	}
 }
 
 func TestGenerateReport_EmptyResults(t *testing.T) {
-	report := GenerateReport("empty-org", nil)
+	got := generateReport("empty-org", nil, testTime)
 
-	if !strings.Contains(report, "**Repos scanned:** 0") {
-		t.Error("expected 0 repos scanned")
-	}
-	if !strings.Contains(report, "## Summary") {
-		t.Error("missing summary section")
+	want := `# Codatus - Org Compliance Report
+
+**Org:** empty-org
+**Scanned:** 2026-04-05 12:00 UTC
+**Repos scanned:** 0
+
+No repos found.
+`
+	if got != want {
+		t.Errorf("report mismatch.\n\nGOT:\n%s\n\nWANT:\n%s", got, want)
 	}
 }

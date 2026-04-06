@@ -8,24 +8,70 @@ import (
 )
 
 // GenerateReport produces a Markdown compliance report from scan results.
-// The format matches the specification in README.md.
 func GenerateReport(org string, results []RepoResult) string {
+	return generateReport(org, results, time.Now())
+}
+
+func generateReport(org string, results []RepoResult, now time.Time) string {
 	var b strings.Builder
+
+	compliant, nonCompliant := splitByCompliance(results)
 
 	b.WriteString("# Codatus - Org Compliance Report\n\n")
 	fmt.Fprintf(&b, "**Org:** %s\n", org)
-	fmt.Fprintf(&b, "**Scanned:** %s\n", time.Now().UTC().Format("2006-01-02 15:04 UTC"))
+	fmt.Fprintf(&b, "**Scanned:** %s\n", now.UTC().Format("2006-01-02 15:04 UTC"))
 	fmt.Fprintf(&b, "**Repos scanned:** %d\n", len(results))
+	if len(results) > 0 {
+		fmt.Fprintf(&b, "**Compliant:** %d/%d (%d%%)\n", len(compliant), len(results), len(compliant)*100/len(results))
+	}
+
+	if len(results) == 0 {
+		b.WriteString("\nNo repos found.\n")
+		return b.String()
+	}
 
 	b.WriteString("\n## Summary\n\n")
 	writeSummaryTable(&b, results)
 
-	b.WriteString("\n## Results by repository\n")
-	for _, rr := range results {
-		writeRepoTable(&b, rr)
+	if len(compliant) > 0 {
+		writeCompliantSection(&b, org, compliant)
+	}
+
+	if len(nonCompliant) > 0 {
+		writeNonCompliantSection(&b, org, nonCompliant)
 	}
 
 	return b.String()
+}
+
+func splitByCompliance(results []RepoResult) (compliant, nonCompliant []RepoResult) {
+	for _, rr := range results {
+		if isFullyCompliant(rr) {
+			compliant = append(compliant, rr)
+		} else {
+			nonCompliant = append(nonCompliant, rr)
+		}
+	}
+	return
+}
+
+func isFullyCompliant(rr RepoResult) bool {
+	for _, r := range rr.Results {
+		if !r.Passed {
+			return false
+		}
+	}
+	return true
+}
+
+func failingRules(rr RepoResult) []string {
+	var names []string
+	for _, r := range rr.Results {
+		if !r.Passed {
+			names = append(names, r.RuleName)
+		}
+	}
+	return names
 }
 
 type ruleSummary struct {
@@ -40,7 +86,6 @@ func writeSummaryTable(b *strings.Builder, results []RepoResult) {
 		return
 	}
 
-	// Aggregate pass/fail counts per rule name.
 	ruleOrder := make([]string, 0)
 	counts := make(map[string]*ruleSummary)
 
@@ -60,7 +105,6 @@ func writeSummaryTable(b *strings.Builder, results []RepoResult) {
 		}
 	}
 
-	// Calculate pass rates.
 	summaries := make([]ruleSummary, 0, len(ruleOrder))
 	total := len(results)
 	for _, name := range ruleOrder {
@@ -69,7 +113,6 @@ func writeSummaryTable(b *strings.Builder, results []RepoResult) {
 		summaries = append(summaries, *s)
 	}
 
-	// Sort by pass rate ascending (worst compliance first).
 	sort.SliceStable(summaries, func(i, j int) bool {
 		return summaries[i].passRate < summaries[j].passRate
 	})
@@ -81,15 +124,31 @@ func writeSummaryTable(b *strings.Builder, results []RepoResult) {
 	}
 }
 
-func writeRepoTable(b *strings.Builder, rr RepoResult) {
-	fmt.Fprintf(b, "\n### %s\n\n", rr.RepoName)
-	b.WriteString("| Rule | Result |\n")
-	b.WriteString("|------|--------|\n")
-	for _, result := range rr.Results {
-		icon := "❌"
-		if result.Passed {
-			icon = "✅"
+func pluralRepos(n int) string {
+	if n == 1 {
+		return "1 repo"
+	}
+	return fmt.Sprintf("%d repos", n)
+}
+
+func writeCompliantSection(b *strings.Builder, org string, compliant []RepoResult) {
+	fmt.Fprintf(b, "\n## ✅ Fully compliant (%s)\n\n", pluralRepos(len(compliant)))
+	b.WriteString("<details>\n<summary>All rules passing</summary>\n\n")
+	for _, rr := range compliant {
+		fmt.Fprintf(b, "[%s](https://github.com/%s/%s)\n", rr.RepoName, org, rr.RepoName)
+	}
+	b.WriteString("\n</details>\n")
+}
+
+func writeNonCompliantSection(b *strings.Builder, org string, nonCompliant []RepoResult) {
+	fmt.Fprintf(b, "\n## ❌ Non-compliant (%s)\n\n", pluralRepos(len(nonCompliant)))
+	for _, rr := range nonCompliant {
+		failing := failingRules(rr)
+		fmt.Fprintf(b, "<details>\n<summary><a href=\"https://github.com/%s/%s\">%s</a> - %d failing</summary>\n\n",
+			org, rr.RepoName, rr.RepoName, len(failing))
+		for _, name := range failing {
+			fmt.Fprintf(b, "- %s\n", name)
 		}
-		fmt.Fprintf(b, "| %s | %s |\n", result.RuleName, icon)
+		b.WriteString("\n</details>\n\n")
 	}
 }
