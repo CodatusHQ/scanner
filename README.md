@@ -38,7 +38,7 @@ Each rule produces a **pass** or **fail** result per repository. There are no sc
 **Pass:** file found.
 **Fail:** file not found.
 
-#### 3. Has README over 2KB
+#### 3. Has substantial README
 
 **Check:** a `README.md` file exists in the repo root and is larger than 2048 bytes.
 
@@ -134,7 +134,7 @@ The report is a single Markdown document posted as a GitHub Issue. Structure:
 |------|--------|
 | Has repo description | ✅ |
 | Has .gitignore | ✅ |
-| Has README over 2KB | ❌ |
+| Has substantial README | ❌ |
 | ... | ... |
 
 ### repo-name-2

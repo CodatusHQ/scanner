@@ -52,7 +52,7 @@ func (r HasGitignore) Check(repo Repo) bool {
 // HasSubstantialReadme checks that README.md exists and is larger than 2048 bytes.
 type HasSubstantialReadme struct{}
 
-func (r HasSubstantialReadme) Name() string { return "Has README over 2KB" }
+func (r HasSubstantialReadme) Name() string { return "Has substantial README" }
 func (r HasSubstantialReadme) Check(repo Repo) bool {
 	f, ok := findFile(repo.Files, "README.md")
 	return ok && f.Size > 2048
