@@ -4,11 +4,13 @@ import "context"
 
 // MockGitHubClient implements GitHubClient with canned responses for testing.
 type MockGitHubClient struct {
-	Repos    []Repo
-	Err      error
-	Tree     map[string][]FileEntry // repo name -> file entries
-	TreeErr  error
-	IssueErr error
+	Repos         []Repo
+	Err           error
+	Tree          map[string][]FileEntry        // repo name -> file entries
+	TreeErr       error
+	Protection    map[string]*BranchProtection   // repo name -> branch protection
+	ProtectionErr error
+	IssueErr      error
 	// CreatedIssue records the last CreateIssue call for assertions.
 	CreatedIssue struct {
 		Owner, Repo, Title, Body string
@@ -25,6 +27,16 @@ func (m *MockGitHubClient) GetTree(ctx context.Context, owner, repo, branch stri
 	}
 	if m.Tree != nil {
 		return m.Tree[repo], nil
+	}
+	return nil, nil
+}
+
+func (m *MockGitHubClient) GetBranchProtection(ctx context.Context, owner, repo, branch string) (*BranchProtection, error) {
+	if m.ProtectionErr != nil {
+		return nil, m.ProtectionErr
+	}
+	if m.Protection != nil {
+		return m.Protection[repo], nil
 	}
 	return nil, nil
 }
