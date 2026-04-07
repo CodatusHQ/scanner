@@ -1,11 +1,11 @@
 package scanner
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
+
+	"github.com/google/go-github/v72/github"
 )
 
 // FileEntry represents a file or directory in a repo.
@@ -42,182 +42,105 @@ type GitHubClient interface {
 }
 
 type realGitHubClient struct {
-	token      string
-	httpClient *http.Client
+	client *github.Client
 }
 
 // NewGitHubClient creates a GitHubClient that calls the GitHub REST API.
 func NewGitHubClient(token string) GitHubClient {
 	return &realGitHubClient{
-		token:      token,
-		httpClient: &http.Client{},
+		client: github.NewClient(nil).WithAuthToken(token),
 	}
-}
-
-func (c *realGitHubClient) doRequest(ctx context.Context, url string, target interface{}) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return fmt.Errorf("create request for %s: %w", url, err)
-	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Accept", "application/vnd.github+json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("request %s: %w", url, err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("request %s: status %d", url, resp.StatusCode)
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(target); err != nil {
-		return fmt.Errorf("decode response from %s: %w", url, err)
-	}
-	return nil
-}
-
-type ghRepo struct {
-	Name          string `json:"name"`
-	Description   string `json:"description"`
-	DefaultBranch string `json:"default_branch"`
-	Archived      bool   `json:"archived"`
 }
 
 func (c *realGitHubClient) ListRepos(ctx context.Context, org string) ([]Repo, error) {
 	var allRepos []Repo
-	page := 1
+	opts := &github.RepositoryListByOrgOptions{
+		ListOptions: github.ListOptions{PerPage: 100},
+	}
 
 	for {
-		url := fmt.Sprintf("https://api.github.com/orgs/%s/repos?per_page=100&page=%d", org, page)
-		var ghRepos []ghRepo
-		if err := c.doRequest(ctx, url, &ghRepos); err != nil {
+		ghRepos, resp, err := c.client.Repositories.ListByOrg(ctx, org, opts)
+		if err != nil {
 			return nil, fmt.Errorf("list repos for org %s: %w", org, err)
-		}
-
-		if len(ghRepos) == 0 {
-			break
 		}
 
 		for _, r := range ghRepos {
 			allRepos = append(allRepos, Repo{
-				Name:          r.Name,
-				Description:   r.Description,
-				DefaultBranch: r.DefaultBranch,
-				Archived:      r.Archived,
+				Name:          r.GetName(),
+				Description:   r.GetDescription(),
+				DefaultBranch: r.GetDefaultBranch(),
+				Archived:      r.GetArchived(),
 			})
 		}
 
-		if len(ghRepos) < 100 {
+		if resp.NextPage == 0 {
 			break
 		}
-		page++
+		opts.Page = resp.NextPage
 	}
 
 	return allRepos, nil
 }
 
 func (c *realGitHubClient) GetTree(ctx context.Context, owner, repo, branch string) ([]FileEntry, error) {
-	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/git/trees/%s?recursive=1", owner, repo, branch)
-
-	var result struct {
-		Tree []struct {
-			Path string `json:"path"`
-			Type string `json:"type"`
-			Size int    `json:"size"`
-		} `json:"tree"`
-	}
-	if err := c.doRequest(ctx, url, &result); err != nil {
+	tree, _, err := c.client.Git.GetTree(ctx, owner, repo, branch, true)
+	if err != nil {
 		return nil, fmt.Errorf("get tree for %s/%s: %w", owner, repo, err)
 	}
 
-	files := make([]FileEntry, len(result.Tree))
-	for i, e := range result.Tree {
-		files[i] = FileEntry{Path: e.Path, Type: e.Type, Size: e.Size}
+	files := make([]FileEntry, len(tree.Entries))
+	for i, e := range tree.Entries {
+		files[i] = FileEntry{
+			Path: e.GetPath(),
+			Type: e.GetType(),
+			Size: e.GetSize(),
+		}
 	}
 	return files, nil
 }
 
 func (c *realGitHubClient) GetBranchProtection(ctx context.Context, owner, repo, branch string) (*BranchProtection, error) {
-	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/branches/%s/protection", owner, repo, branch)
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	prot, resp, err := c.client.Repositories.GetBranchProtection(ctx, owner, repo, branch)
 	if err != nil {
-		return nil, fmt.Errorf("create request for %s: %w", url, err)
-	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Accept", "application/vnd.github+json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("request %s: %w", url, err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, nil
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("get branch protection for %s/%s: status %d", owner, repo, resp.StatusCode)
-	}
-
-	var result struct {
-		RequiredPullRequestReviews *struct {
-			RequiredApprovingReviewCount int `json:"required_approving_review_count"`
-		} `json:"required_pull_request_reviews"`
-		RequiredStatusChecks *struct {
-			Contexts []string `json:"contexts"`
-		} `json:"required_status_checks"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("decode branch protection for %s/%s: %w", owner, repo, err)
+		if resp != nil && (resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusForbidden) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("get branch protection for %s/%s: %w", owner, repo, err)
 	}
 
 	bp := &BranchProtection{}
-	if result.RequiredPullRequestReviews != nil {
-		bp.RequiredReviewers = result.RequiredPullRequestReviews.RequiredApprovingReviewCount
+	if prot.RequiredPullRequestReviews != nil {
+		bp.RequiredReviewers = prot.RequiredPullRequestReviews.RequiredApprovingReviewCount
 	}
-	if result.RequiredStatusChecks != nil {
-		bp.RequiredStatusChecks = result.RequiredStatusChecks.Contexts
+	if prot.RequiredStatusChecks != nil && prot.RequiredStatusChecks.Contexts != nil {
+		bp.RequiredStatusChecks = *prot.RequiredStatusChecks.Contexts
 	}
 	return bp, nil
 }
 
 func (c *realGitHubClient) GetRulesets(ctx context.Context, owner, repo, branch string) (*BranchProtection, error) {
-	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/rules/branches/%s", owner, repo, branch)
-
-	var rules []struct {
-		Type       string `json:"type"`
-		Parameters *struct {
-			RequiredApprovingReviewCount int `json:"required_approving_review_count"`
-			RequiredStatusChecks         []struct {
-				Context string `json:"context"`
-			} `json:"required_status_checks"`
-		} `json:"parameters"`
-	}
-	if err := c.doRequest(ctx, url, &rules); err != nil {
+	rules, resp, err := c.client.Repositories.GetRulesForBranch(ctx, owner, repo, branch, nil)
+	if err != nil {
+		if resp != nil && (resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusForbidden) {
+			return nil, nil
+		}
 		return nil, fmt.Errorf("get branch rules for %s/%s: %w", owner, repo, err)
 	}
 
 	var bp BranchProtection
 	found := false
 
-	for _, rule := range rules {
-		if rule.Parameters == nil {
-			continue
+	for _, pr := range rules.PullRequest {
+		found = true
+		if pr.Parameters.RequiredApprovingReviewCount > bp.RequiredReviewers {
+			bp.RequiredReviewers = pr.Parameters.RequiredApprovingReviewCount
 		}
-		switch rule.Type {
-		case "pull_request":
-			found = true
-			if rule.Parameters.RequiredApprovingReviewCount > bp.RequiredReviewers {
-				bp.RequiredReviewers = rule.Parameters.RequiredApprovingReviewCount
-			}
-		case "required_status_checks":
-			found = true
-			for _, sc := range rule.Parameters.RequiredStatusChecks {
-				bp.RequiredStatusChecks = append(bp.RequiredStatusChecks, sc.Context)
-			}
+	}
+
+	for _, sc := range rules.RequiredStatusChecks {
+		found = true
+		for _, check := range sc.Parameters.RequiredStatusChecks {
+			bp.RequiredStatusChecks = append(bp.RequiredStatusChecks, check.Context)
 		}
 	}
 
@@ -228,35 +151,14 @@ func (c *realGitHubClient) GetRulesets(ctx context.Context, owner, repo, branch 
 }
 
 func (c *realGitHubClient) CreateIssue(ctx context.Context, owner, repo, title, body string) error {
-	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/issues", owner, repo)
+	req := &github.IssueRequest{
+		Title: github.Ptr(title),
+		Body:  github.Ptr(body),
+	}
 
-	payload := struct {
-		Title string `json:"title"`
-		Body  string `json:"body"`
-	}{Title: title, Body: body}
-
-	jsonBody, err := json.Marshal(payload)
+	_, _, err := c.client.Issues.Create(ctx, owner, repo, req)
 	if err != nil {
-		return fmt.Errorf("marshal issue payload: %w", err)
+		return fmt.Errorf("create issue in %s/%s: %w", owner, repo, err)
 	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(jsonBody))
-	if err != nil {
-		return fmt.Errorf("create request for %s: %w", url, err)
-	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("request %s: %w", url, err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusCreated {
-		return fmt.Errorf("create issue in %s/%s: status %d", owner, repo, resp.StatusCode)
-	}
-
 	return nil
 }
