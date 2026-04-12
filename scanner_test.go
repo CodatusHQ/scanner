@@ -3,8 +3,25 @@ package scanner
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"testing"
+	"time"
+
+	"github.com/google/go-github/v72/github"
 )
+
+// newRateLimitError creates a *github.RateLimitError suitable for mock testing.
+func newRateLimitError() *github.RateLimitError {
+	return &github.RateLimitError{
+		Rate: github.Rate{
+			Limit:     5000,
+			Remaining: 0,
+			Reset:     github.Timestamp{Time: time.Now().Add(time.Hour)},
+		},
+		Response: &http.Response{StatusCode: http.StatusForbidden},
+		Message:  "API rate limit exceeded",
+	}
+}
 
 func TestScan_SkipsArchivedRepos(t *testing.T) {
 	client := &MockGitHubClient{
@@ -166,10 +183,10 @@ func TestScan_SkipsEmptyRepo(t *testing.T) {
 	}
 
 	// Results sorted alphabetically: empty-repo first
-	if !results[0].Skipped || results[0].SkipReason == "" {
-		t.Errorf("expected empty-repo to be skipped, got %+v", results[0])
+	if !results[0].Skipped() || results[0].KnownSkipReason != "repository is empty" {
+		t.Errorf("expected empty-repo to be skipped with known reason, got %+v", results[0])
 	}
-	if results[1].Skipped {
+	if results[1].Skipped() {
 		t.Errorf("expected normal-repo to not be skipped")
 	}
 	if len(results[1].Results) == 0 {
@@ -195,20 +212,126 @@ func TestScan_SkipsTruncatedTree(t *testing.T) {
 	if len(results) != 1 {
 		t.Fatalf("expected 1 result, got %d", len(results))
 	}
-	if !results[0].Skipped {
-		t.Error("expected huge-repo to be skipped")
-	}
-	if results[0].SkipReason == "" {
-		t.Error("expected skip reason to be set")
+	if !results[0].Skipped() || results[0].KnownSkipReason == "" {
+		t.Error("expected huge-repo to be skipped with known reason")
 	}
 }
 
-func TestScan_AbortsOnRateLimit(t *testing.T) {
+func TestScan_SkipsUnexpectedGetTreeError(t *testing.T) {
+	client := &MockGitHubClient{
+		Repos: []Repo{
+			{Name: "broken-repo", Description: "Broken", DefaultBranch: "main"},
+			{Name: "good-repo", Description: "Good", DefaultBranch: "main"},
+		},
+		TreeErrs: map[string]error{
+			"broken-repo": fmt.Errorf("get tree for broken-repo: status 500"),
+		},
+	}
+
+	results, err := Scan(context.Background(), client, "test-org")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+
+	// Sorted: broken-repo first
+	if !results[0].Skipped() || results[0].UnknownSkipError == "" {
+		t.Errorf("expected broken-repo to be skipped with unknown error, got %+v", results[0])
+	}
+	if results[1].Skipped() {
+		t.Error("expected good-repo to not be skipped")
+	}
+}
+
+func TestScan_SkipsUnexpectedRulesetsError(t *testing.T) {
+	client := &MockGitHubClient{
+		Repos: []Repo{
+			{Name: "broken-repo", Description: "Broken", DefaultBranch: "main"},
+			{Name: "good-repo", Description: "Good", DefaultBranch: "main"},
+		},
+		RulesetsErrs: map[string]error{
+			"broken-repo": fmt.Errorf("get rulesets: status 500"),
+		},
+	}
+
+	results, err := Scan(context.Background(), client, "test-org")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+
+	if !results[0].Skipped() || results[0].UnknownSkipError == "" {
+		t.Errorf("expected broken-repo to be skipped, got %+v", results[0])
+	}
+	if results[1].Skipped() {
+		t.Error("expected good-repo to not be skipped")
+	}
+}
+
+func TestScan_SkipsUnexpectedBranchProtectionError(t *testing.T) {
+	client := &MockGitHubClient{
+		Repos: []Repo{
+			{Name: "broken-repo", Description: "Broken", DefaultBranch: "main"},
+		},
+		// No rulesets -> falls through to classic protection
+		ProtectionErrs: map[string]error{
+			"broken-repo": fmt.Errorf("get protection: status 500"),
+		},
+	}
+
+	results, err := Scan(context.Background(), client, "test-org")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if !results[0].Skipped() || results[0].UnknownSkipError == "" {
+		t.Errorf("expected broken-repo to be skipped, got %+v", results[0])
+	}
+}
+
+func TestScan_AbortsOnRateLimitDuringGetTree(t *testing.T) {
 	client := &MockGitHubClient{
 		Repos: []Repo{
 			{Name: "repo-a", Description: "A", DefaultBranch: "main"},
 		},
-		TreeErr: fmt.Errorf("rate limit exceeded"),
+		TreeErr: newRateLimitError(),
+	}
+
+	_, err := Scan(context.Background(), client, "test-org")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+}
+
+func TestScan_AbortsOnRateLimitDuringGetRulesets(t *testing.T) {
+	client := &MockGitHubClient{
+		Repos: []Repo{
+			{Name: "repo-a", Description: "A", DefaultBranch: "main"},
+		},
+		RulesetsErr: newRateLimitError(),
+	}
+
+	_, err := Scan(context.Background(), client, "test-org")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+}
+
+func TestScan_AbortsOnRateLimitDuringGetBranchProtection(t *testing.T) {
+	client := &MockGitHubClient{
+		Repos: []Repo{
+			{Name: "repo-a", Description: "A", DefaultBranch: "main"},
+		},
+		ProtectionErr: newRateLimitError(),
 	}
 
 	_, err := Scan(context.Background(), client, "test-org")

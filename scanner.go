@@ -16,11 +16,16 @@ type Config struct {
 }
 
 // RepoResult holds all rule results for a single repository.
+// KnownSkipReason and UnknownSkipError are mutually exclusive.
 type RepoResult struct {
-	RepoName   string
-	Results    []RuleResult
-	Skipped    bool
-	SkipReason string
+	RepoName         string
+	Results          []RuleResult
+	KnownSkipReason  string
+	UnknownSkipError string
+}
+
+func (rr RepoResult) Skipped() bool {
+	return rr.KnownSkipReason != "" || rr.UnknownSkipError != ""
 }
 
 // Run is the high-level entry point. It constructs a client, scans the org,
@@ -36,7 +41,7 @@ func Run(ctx context.Context, cfg Config) error {
 	scanned := 0
 	skipped := 0
 	for _, r := range results {
-		if r.Skipped {
+		if r.Skipped() {
 			skipped++
 		} else {
 			scanned++
@@ -55,6 +60,18 @@ func Run(ctx context.Context, cfg Config) error {
 	return nil
 }
 
+// skipReasonForError returns a human-readable skip reason and an optional raw
+// error string for unexpected failures. Known errors get a clean reason with no
+// error detail. Unknown errors get a generic reason with the error message.
+func skipRepo(name string, err error) RepoResult {
+	if errors.Is(err, ErrEmptyRepo) {
+		return RepoResult{RepoName: name, KnownSkipReason: "repository is empty"}
+	}
+	if errors.Is(err, ErrTruncatedTree) {
+		return RepoResult{RepoName: name, KnownSkipReason: "file tree too large (truncated by GitHub API)"}
+	}
+	return RepoResult{RepoName: name, UnknownSkipError: err.Error()}
+}
 
 // Scan lists all non-archived repos in the org and evaluates every rule against each.
 func Scan(ctx context.Context, client GitHubClient, org string) ([]RepoResult, error) {
@@ -73,34 +90,30 @@ func Scan(ctx context.Context, client GitHubClient, org string) ([]RepoResult, e
 
 		files, err := client.GetTree(ctx, org, repo.Name, repo.DefaultBranch)
 		if err != nil {
-			if errors.Is(err, ErrEmptyRepo) {
-				results = append(results, RepoResult{
-					RepoName:   repo.Name,
-					Skipped:    true,
-					SkipReason: "repository is empty",
-				})
-				continue
+			if isRateLimitError(err) {
+				return nil, fmt.Errorf("get tree for repo %s: %w", repo.Name, err)
 			}
-			if errors.Is(err, ErrTruncatedTree) {
-				results = append(results, RepoResult{
-					RepoName:   repo.Name,
-					Skipped:    true,
-					SkipReason: "file tree too large (truncated by GitHub API)",
-				})
-				continue
-			}
-			return nil, fmt.Errorf("get tree for repo %s: %w", repo.Name, err)
+			results = append(results, skipRepo(repo.Name, err))
+			continue
 		}
 		repo.Files = files
 
 		protection, err := client.GetRulesets(ctx, org, repo.Name, repo.DefaultBranch)
 		if err != nil {
-			return nil, fmt.Errorf("get rulesets for repo %s: %w", repo.Name, err)
+			if isRateLimitError(err) {
+				return nil, fmt.Errorf("get rulesets for repo %s: %w", repo.Name, err)
+			}
+			results = append(results, skipRepo(repo.Name, err))
+			continue
 		}
 		if protection == nil {
 			protection, err = client.GetBranchProtection(ctx, org, repo.Name, repo.DefaultBranch)
 			if err != nil {
-				return nil, fmt.Errorf("get branch protection for repo %s: %w", repo.Name, err)
+				if isRateLimitError(err) {
+					return nil, fmt.Errorf("get branch protection for repo %s: %w", repo.Name, err)
+				}
+				results = append(results, skipRepo(repo.Name, err))
+				continue
 			}
 		}
 		repo.BranchProtection = protection

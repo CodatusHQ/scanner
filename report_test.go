@@ -219,8 +219,8 @@ func TestGenerateReport_WithSkippedRepos(t *testing.T) {
 		{RepoName: "good-repo", Results: []RuleResult{
 			{RuleName: "Has repo description", Passed: true},
 		}},
-		{RepoName: "empty-repo", Skipped: true, SkipReason: "repository is empty"},
-		{RepoName: "huge-repo", Skipped: true, SkipReason: "file tree too large (truncated by GitHub API)"},
+		{RepoName: "empty-repo", KnownSkipReason: "repository is empty"},
+		{RepoName: "huge-repo", KnownSkipReason: "file tree too large (truncated by GitHub API)"},
 	}
 
 	got := generateReport("test-org", results, testTime)
@@ -250,20 +250,8 @@ func TestGenerateReport_WithSkippedRepos(t *testing.T) {
 
 ## ⚠️ Skipped (2 repos)
 
-<details>
-<summary><a href="https://github.com/test-org/empty-repo">empty-repo</a> - repository is empty</summary>
-
-This repository was excluded from compliance results.
-
-</details>
-
-<details>
-<summary><a href="https://github.com/test-org/huge-repo">huge-repo</a> - file tree too large (truncated by GitHub API)</summary>
-
-This repository was excluded from compliance results.
-
-</details>
-
+- [empty-repo](https://github.com/test-org/empty-repo) - repository is empty
+- [huge-repo](https://github.com/test-org/huge-repo) - file tree too large (truncated by GitHub API)
 `
 	if got != want {
 		t.Errorf("report mismatch.\n\nGOT:\n%s\n\nWANT:\n%s", got, want)
@@ -272,7 +260,7 @@ This repository was excluded from compliance results.
 
 func TestGenerateReport_OnlySkippedRepos(t *testing.T) {
 	results := []RepoResult{
-		{RepoName: "empty-repo", Skipped: true, SkipReason: "repository is empty"},
+		{RepoName: "empty-repo", KnownSkipReason: "repository is empty"},
 	}
 
 	got := generateReport("test-org", results, testTime)
@@ -286,13 +274,32 @@ func TestGenerateReport_OnlySkippedRepos(t *testing.T) {
 
 ## ⚠️ Skipped (1 repo)
 
-<details>
-<summary><a href="https://github.com/test-org/empty-repo">empty-repo</a> - repository is empty</summary>
+- [empty-repo](https://github.com/test-org/empty-repo) - repository is empty
+`
+	if got != want {
+		t.Errorf("report mismatch.\n\nGOT:\n%s\n\nWANT:\n%s", got, want)
+	}
+}
 
-This repository was excluded from compliance results.
+func TestGenerateReport_WithUnexpectedSkipError(t *testing.T) {
+	results := []RepoResult{
+		{RepoName: "broken-repo", UnknownSkipError: "get tree for broken-repo: status 500"},
+		{RepoName: "empty-repo", KnownSkipReason: "repository is empty"},
+	}
 
-</details>
+	got := generateReport("test-org", results, testTime)
 
+	want := `# Codatus - Org Compliance Report
+
+**Org:** test-org
+**Scanned:** 2026-04-05 12:00 UTC
+**Repos scanned:** 0
+**Skipped:** 2
+
+## ⚠️ Skipped (2 repos)
+
+- [broken-repo](https://github.com/test-org/broken-repo) - unexpected error: get tree for broken-repo: status 500
+- [empty-repo](https://github.com/test-org/empty-repo) - repository is empty
 `
 	if got != want {
 		t.Errorf("report mismatch.\n\nGOT:\n%s\n\nWANT:\n%s", got, want)

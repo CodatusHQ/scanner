@@ -56,7 +56,7 @@ func generateReport(org string, results []RepoResult, now time.Time) string {
 
 func splitScanned(results []RepoResult) (scanned, skipped []RepoResult) {
 	for _, rr := range results {
-		if rr.Skipped {
+		if rr.Skipped() {
 			skipped = append(skipped, rr)
 		} else {
 			scanned = append(scanned, rr)
@@ -177,9 +177,10 @@ func writeNonCompliantSection(b *strings.Builder, org string, nonCompliant []Rep
 func writeSkippedSection(b *strings.Builder, org string, skipped []RepoResult) {
 	fmt.Fprintf(b, "\n## ⚠️ Skipped (%s)\n\n", pluralRepos(len(skipped)))
 	for _, rr := range skipped {
-		fmt.Fprintf(b, "<details>\n<summary><a href=\"https://github.com/%s/%s\">%s</a> - %s</summary>\n\n",
-			org, rr.RepoName, rr.RepoName, rr.SkipReason)
-		b.WriteString("This repository was excluded from compliance results.\n")
-		b.WriteString("\n</details>\n\n")
+		if rr.KnownSkipReason != "" {
+			fmt.Fprintf(b, "- [%s](https://github.com/%s/%s) - %s\n", rr.RepoName, org, rr.RepoName, rr.KnownSkipReason)
+		} else {
+			fmt.Fprintf(b, "- [%s](https://github.com/%s/%s) - unexpected error: %s\n", rr.RepoName, org, rr.RepoName, rr.UnknownSkipError)
+		}
 	}
 }
