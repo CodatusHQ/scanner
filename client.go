@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 
 	"github.com/google/go-github/v72/github"
 )
@@ -50,6 +51,14 @@ func NewGitHubClient(token string) GitHubClient {
 	return &realGitHubClient{
 		client: github.NewClient(nil).WithAuthToken(token),
 	}
+}
+
+// newTestGitHubClient creates a GitHubClient pointed at a test server URL.
+func newTestGitHubClient(baseURL string) GitHubClient {
+	client := github.NewClient(nil)
+	u, _ := url.Parse(baseURL + "/")
+	client.BaseURL = u
+	return &realGitHubClient{client: client}
 }
 
 func (c *realGitHubClient) ListRepos(ctx context.Context, org string) ([]Repo, error) {
