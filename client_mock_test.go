@@ -4,16 +4,18 @@ import "context"
 
 // MockGitHubClient implements GitHubClient with canned responses for testing.
 type MockGitHubClient struct {
-	Repos         []Repo
-	Err           error
-	Tree          map[string][]FileEntry       // repo name -> file entries
-	TreeErr       error                        // global tree error (used if TreeErrs is nil)
-	TreeErrs      map[string]error             // repo name -> per-repo tree error
-	Protection    map[string]*BranchProtection  // repo name -> classic branch protection
-	ProtectionErr error
-	Rulesets      map[string]*BranchProtection  // repo name -> rulesets protection
-	RulesetsErr   error
-	IssueErr      error
+	Repos          []Repo
+	Err            error
+	Tree           map[string][]FileEntry       // repo name -> file entries
+	TreeErr        error                        // global tree error (used if TreeErrs is nil)
+	TreeErrs       map[string]error             // repo name -> per-repo tree error
+	Protection     map[string]*BranchProtection  // repo name -> classic branch protection
+	ProtectionErr  error                        // global protection error (used if ProtectionErrs is nil)
+	ProtectionErrs map[string]error             // repo name -> per-repo protection error
+	Rulesets       map[string]*BranchProtection  // repo name -> rulesets protection
+	RulesetsErr    error                        // global rulesets error (used if RulesetsErrs is nil)
+	RulesetsErrs   map[string]error             // repo name -> per-repo rulesets error
+	IssueErr       error
 	// CreatedIssue records the last CreateIssue call for assertions.
 	CreatedIssue struct {
 		Owner, Repo, Title, Body string
@@ -40,6 +42,11 @@ func (m *MockGitHubClient) GetTree(ctx context.Context, owner, repo, branch stri
 }
 
 func (m *MockGitHubClient) GetBranchProtection(ctx context.Context, owner, repo, branch string) (*BranchProtection, error) {
+	if m.ProtectionErrs != nil {
+		if err, ok := m.ProtectionErrs[repo]; ok {
+			return nil, err
+		}
+	}
 	if m.ProtectionErr != nil {
 		return nil, m.ProtectionErr
 	}
@@ -50,6 +57,11 @@ func (m *MockGitHubClient) GetBranchProtection(ctx context.Context, owner, repo,
 }
 
 func (m *MockGitHubClient) GetRulesets(ctx context.Context, owner, repo, branch string) (*BranchProtection, error) {
+	if m.RulesetsErrs != nil {
+		if err, ok := m.RulesetsErrs[repo]; ok {
+			return nil, err
+		}
+	}
 	if m.RulesetsErr != nil {
 		return nil, m.RulesetsErr
 	}
