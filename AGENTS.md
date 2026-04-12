@@ -98,8 +98,9 @@ When the user requests changes on the PR (either in chat or via GitHub review co
 
 ## Language and stack
 - **Go** (latest stable).
+- **google/go-github** for all GitHub REST API interactions.
 - No database. No ORM. No web framework.
-- Standard library preferred. Third-party dependencies only when clearly justified.
+- Standard library preferred for everything else. Third-party dependencies only when clearly justified.
 
 ---
 
@@ -117,11 +118,12 @@ The scanner is an importable Go package (`package scanner`) at the module root. 
 ├── README.md
 ├── go.mod
 ├── go.sum
-├── client.go               # GitHubClient interface + real implementation
-├── client_mock_test.go     # mock GitHubClient (test-only)
+├── client.go               # GitHubClient interface + real implementation (google/go-github)
+├── client_test.go          # httptest-based tests for real GitHub client
+├── client_mock_test.go     # mock GitHubClient for scanner/rules/report tests
 ├── scanner.go              # Config, Run(), Scan()
 ├── rules.go                # rule definitions + evaluation
-├── report.go               # Markdown report generation (future)
+├── report.go               # Markdown report generation
 ├── scanner_test.go         # tests
 ├── rules_test.go
 └── report_test.go
@@ -153,33 +155,38 @@ The scanner is an importable Go package (`package scanner`) at the module root. 
 
 ## Testing approach
 
-### Interface-based GitHub client
-The scanner must interact with GitHub exclusively through a `GitHubClient` interface. Example shape:
+There are two layers of tests, each covering different concerns.
 
-```go
-type GitHubClient interface {
-    ListRepos(ctx context.Context, org string) ([]Repo, error)
-    ListFiles(ctx context.Context, owner, repo string) ([]string, error)
-    GetFileContent(ctx context.Context, owner, repo, path string) ([]byte, error)
-    GetBranchProtection(ctx context.Context, owner, repo, branch string) (*BranchProtection, error)
-    // ... expand as needed
-}
-```
+### Layer 1: Mock-based tests (scanner logic, rules, reports)
 
-The real implementation calls GitHub's REST API. Tests use a mock implementation (`client_mock.go`) that returns canned data representing different repo states.
+The scanner interacts with GitHub exclusively through a `GitHubClient` interface. Tests for scanner logic, rules, and report generation use `MockGitHubClient` (`client_mock_test.go`) which returns canned domain objects directly - no HTTP involved.
 
-### Test structure
-- Tests exercise the scanner end-to-end through the mock client: set up a mock with a known repo state → run scan → assert the report/results.
+These tests verify business logic: "given a repo with these files and this protection config, does the scanner produce the correct results?"
+
+**Test scenarios to cover:**
+- Every rule must have: a passing case, a failing case, and an edge case where applicable (e.g., README exists but is under 2KB).
+- Scanner tests cover: archived repo filtering, result sorting, ruleset-to-classic-protection fallback, error propagation.
+- Report tests verify the Markdown output matches expected structure.
+
+### Layer 2: httptest-based tests (real GitHub client)
+
+The real `GitHubClient` implementation (`realGitHubClient` in `client.go`) uses `google/go-github` to call the GitHub REST API. Tests in `client_test.go` use `httptest.NewServer` to spin up a local HTTP server that returns canned JSON responses matching GitHub's API format.
+
+These tests verify the HTTP layer: "given this API response (or error status), does the client parse it correctly and handle errors as expected?"
+
+**Test scenarios to cover:**
+- Field mapping: GitHub JSON fields correctly map to our domain types (`Repo`, `FileEntry`, `BranchProtection`).
+- Pagination: `ListRepos` follows `Link` headers across multiple pages.
+- Graceful fallthrough: `GetBranchProtection` and `GetRulesets` return `nil, nil` on 404 (no protection) and 403 (private repo without GitHub Pro).
+- Error propagation: 500 and other unexpected status codes return a wrapped error, not `nil, nil`.
+- Aggregation: multiple ruleset entries (e.g., org-level + repo-level pull_request rules) are correctly merged.
+
+Use `setupTestServer(t, mux)` or `newTestGitHubClient(serverURL)` to create a client pointed at the test server.
+
+### General test conventions
 - Use Go's standard `testing` package. No test frameworks.
 - Test files live next to the code they test (`scanner_test.go` next to `scanner.go`).
-
-### Test scenarios to cover
-At minimum, every rule must have:
-- A passing case (repo satisfies the rule)
-- A failing case (repo violates the rule)
-- An edge case where applicable (e.g., README exists but is under 2KB)
-
-Report generation tests must verify the Markdown output matches expected structure.
+- Test naming: `Test<Function>_<Scenario>` (e.g., `TestGetRulesets_403`).
 
 ---
 
