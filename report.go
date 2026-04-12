@@ -15,23 +15,29 @@ func GenerateReport(org string, results []RepoResult) string {
 func generateReport(org string, results []RepoResult, now time.Time) string {
 	var b strings.Builder
 
-	compliant, nonCompliant := splitByCompliance(results)
+	scanned, skipped := splitScanned(results)
+	compliant, nonCompliant := splitByCompliance(scanned)
 
 	b.WriteString("# Codatus - Org Compliance Report\n\n")
 	fmt.Fprintf(&b, "**Org:** %s\n", org)
 	fmt.Fprintf(&b, "**Scanned:** %s\n", now.UTC().Format("2006-01-02 15:04 UTC"))
-	fmt.Fprintf(&b, "**Repos scanned:** %d\n", len(results))
-	if len(results) > 0 {
-		fmt.Fprintf(&b, "**Compliant:** %d/%d (%d%%)\n", len(compliant), len(results), len(compliant)*100/len(results))
+	fmt.Fprintf(&b, "**Repos scanned:** %d\n", len(scanned))
+	if len(scanned) > 0 {
+		fmt.Fprintf(&b, "**Compliant:** %d/%d (%d%%)\n", len(compliant), len(scanned), len(compliant)*100/len(scanned))
+	}
+	if len(skipped) > 0 {
+		fmt.Fprintf(&b, "**Skipped:** %d\n", len(skipped))
 	}
 
-	if len(results) == 0 {
+	if len(scanned) == 0 && len(skipped) == 0 {
 		b.WriteString("\nNo repos found.\n")
 		return b.String()
 	}
 
-	b.WriteString("\n## Summary\n\n")
-	writeSummaryTable(&b, results)
+	if len(scanned) > 0 {
+		b.WriteString("\n## Summary\n\n")
+		writeSummaryTable(&b, scanned)
+	}
 
 	if len(compliant) > 0 {
 		writeCompliantSection(&b, org, compliant)
@@ -41,7 +47,22 @@ func generateReport(org string, results []RepoResult, now time.Time) string {
 		writeNonCompliantSection(&b, org, nonCompliant)
 	}
 
+	if len(skipped) > 0 {
+		writeSkippedSection(&b, org, skipped)
+	}
+
 	return b.String()
+}
+
+func splitScanned(results []RepoResult) (scanned, skipped []RepoResult) {
+	for _, rr := range results {
+		if rr.Skipped {
+			skipped = append(skipped, rr)
+		} else {
+			scanned = append(scanned, rr)
+		}
+	}
+	return
 }
 
 func splitByCompliance(results []RepoResult) (compliant, nonCompliant []RepoResult) {
@@ -149,6 +170,16 @@ func writeNonCompliantSection(b *strings.Builder, org string, nonCompliant []Rep
 		for _, name := range failing {
 			fmt.Fprintf(b, "- %s\n", name)
 		}
+		b.WriteString("\n</details>\n\n")
+	}
+}
+
+func writeSkippedSection(b *strings.Builder, org string, skipped []RepoResult) {
+	fmt.Fprintf(b, "\n## ⚠️ Skipped (%s)\n\n", pluralRepos(len(skipped)))
+	for _, rr := range skipped {
+		fmt.Fprintf(b, "<details>\n<summary><a href=\"https://github.com/%s/%s\">%s</a> - %s</summary>\n\n",
+			org, rr.RepoName, rr.RepoName, rr.SkipReason)
+		b.WriteString("This repository was excluded from compliance results.\n")
 		b.WriteString("\n</details>\n\n")
 	}
 }

@@ -2,6 +2,7 @@ package scanner
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"sort"
@@ -16,8 +17,10 @@ type Config struct {
 
 // RepoResult holds all rule results for a single repository.
 type RepoResult struct {
-	RepoName string
-	Results  []RuleResult
+	RepoName   string
+	Results    []RuleResult
+	Skipped    bool
+	SkipReason string
 }
 
 // Run is the high-level entry point. It constructs a client, scans the org,
@@ -30,7 +33,16 @@ func Run(ctx context.Context, cfg Config) error {
 		return fmt.Errorf("scan org %s: %w", cfg.Org, err)
 	}
 
-	log.Printf("scanned %d repos in org %s", len(results), cfg.Org)
+	scanned := 0
+	skipped := 0
+	for _, r := range results {
+		if r.Skipped {
+			skipped++
+		} else {
+			scanned++
+		}
+	}
+	log.Printf("scanned %d repos in org %s (%d skipped)", scanned, cfg.Org, skipped)
 
 	report := GenerateReport(cfg.Org, results)
 
@@ -61,6 +73,22 @@ func Scan(ctx context.Context, client GitHubClient, org string) ([]RepoResult, e
 
 		files, err := client.GetTree(ctx, org, repo.Name, repo.DefaultBranch)
 		if err != nil {
+			if errors.Is(err, ErrEmptyRepo) {
+				results = append(results, RepoResult{
+					RepoName:   repo.Name,
+					Skipped:    true,
+					SkipReason: "repository is empty",
+				})
+				continue
+			}
+			if errors.Is(err, ErrTruncatedTree) {
+				results = append(results, RepoResult{
+					RepoName:   repo.Name,
+					Skipped:    true,
+					SkipReason: "file tree too large (truncated by GitHub API)",
+				})
+				continue
+			}
 			return nil, fmt.Errorf("get tree for repo %s: %w", repo.Name, err)
 		}
 		repo.Files = files

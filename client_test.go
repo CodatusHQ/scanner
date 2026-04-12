@@ -2,6 +2,7 @@ package scanner
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -420,5 +421,123 @@ func TestCreateIssue_APIError(t *testing.T) {
 	err := client.CreateIssue(context.Background(), "org", "repo", "Test", "Body")
 	if err == nil {
 		t.Fatal("expected error, got nil")
+	}
+}
+
+// --- GetTree: empty repo and truncated ---
+
+func TestGetTree_EmptyRepo_409(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/org/repo/git/trees/main", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusConflict)
+		fmt.Fprint(w, `{"message": "Git Repository is empty."}`)
+	})
+	client := setupTestServer(t, mux)
+
+	_, err := client.GetTree(context.Background(), "org", "repo", "main")
+	if !errors.Is(err, ErrEmptyRepo) {
+		t.Fatalf("expected ErrEmptyRepo, got %v", err)
+	}
+}
+
+func TestGetTree_Truncated(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/org/repo/git/trees/main", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{
+			"sha": "abc123",
+			"truncated": true,
+			"tree": [
+				{"path": "README.md", "type": "blob", "size": 100}
+			]
+		}`)
+	})
+	client := setupTestServer(t, mux)
+
+	_, err := client.GetTree(context.Background(), "org", "repo", "main")
+	if !errors.Is(err, ErrTruncatedTree) {
+		t.Fatalf("expected ErrTruncatedTree, got %v", err)
+	}
+}
+
+// --- Rate limit tests ---
+
+// rateLimitHandler returns a handler that simulates a GitHub rate limit response.
+func rateLimitHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-RateLimit-Remaining", "0")
+		w.Header().Set("X-RateLimit-Limit", "5000")
+		w.Header().Set("X-RateLimit-Reset", "1924905600")
+		w.WriteHeader(http.StatusForbidden)
+		fmt.Fprint(w, `{"message": "API rate limit exceeded for user.", "documentation_url": "https://docs.github.com/rest/overview/resources-in-the-rest-api#rate-limiting"}`)
+	}
+}
+
+func TestGetBranchProtection_RateLimit(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/org/repo/branches/main/protection", rateLimitHandler())
+	client := setupTestServer(t, mux)
+
+	_, err := client.GetBranchProtection(context.Background(), "org", "repo", "main")
+	if err == nil {
+		t.Fatal("expected rate limit error, got nil")
+	}
+	if !isRateLimitError(err) {
+		t.Errorf("expected rate limit error type, got: %v", err)
+	}
+}
+
+func TestGetRulesets_RateLimit(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/org/repo/rules/branches/main", rateLimitHandler())
+	client := setupTestServer(t, mux)
+
+	_, err := client.GetRulesets(context.Background(), "org", "repo", "main")
+	if err == nil {
+		t.Fatal("expected rate limit error, got nil")
+	}
+	if !isRateLimitError(err) {
+		t.Errorf("expected rate limit error type, got: %v", err)
+	}
+}
+
+func TestListRepos_RateLimit(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/orgs/test-org/repos", rateLimitHandler())
+	client := setupTestServer(t, mux)
+
+	_, err := client.ListRepos(context.Background(), "test-org")
+	if err == nil {
+		t.Fatal("expected rate limit error, got nil")
+	}
+	if !isRateLimitError(err) {
+		t.Errorf("expected rate limit error type, got: %v", err)
+	}
+}
+
+func TestGetTree_RateLimit(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/org/repo/git/trees/main", rateLimitHandler())
+	client := setupTestServer(t, mux)
+
+	_, err := client.GetTree(context.Background(), "org", "repo", "main")
+	if err == nil {
+		t.Fatal("expected rate limit error, got nil")
+	}
+	if !isRateLimitError(err) {
+		t.Errorf("expected rate limit error type, got: %v", err)
+	}
+}
+
+func TestCreateIssue_RateLimit(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/org/repo/issues", rateLimitHandler())
+	client := setupTestServer(t, mux)
+
+	err := client.CreateIssue(context.Background(), "org", "repo", "Test", "Body")
+	if err == nil {
+		t.Fatal("expected rate limit error, got nil")
+	}
+	if !isRateLimitError(err) {
+		t.Errorf("expected rate limit error type, got: %v", err)
 	}
 }
