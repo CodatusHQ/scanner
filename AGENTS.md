@@ -63,7 +63,7 @@ End the design brief with:
 ### Phase 2 - Implement and test
 
 After design approval:
-1. Pull latest `main`, then create a feature branch. Branch name must match the pattern `type/short-description` using the same types as PR titles (e.g., `feat/add-ci-workflow-rule`, `fix/pass-rate-calculation`).
+1. Always start from a clean, up-to-date main: `git checkout main && git pull origin main`, then create a new branch. Never reuse a branch from a previous PR. Branch name must match the pattern `type/short-description` using the same types as PR titles (e.g., `feat/add-ci-workflow-rule`, `fix/pass-rate-calculation`).
 2. Implement the full approved design.
 3. Include tests (see "Testing approach" below). Tests are mandatory.
 4. Run `go test ./...` and ensure all tests pass. If any test fails, fix the code or the test before proceeding.
