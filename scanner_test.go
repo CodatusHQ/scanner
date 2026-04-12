@@ -144,3 +144,75 @@ func TestScan_FallsBackToClassicProtection(t *testing.T) {
 		}
 	}
 }
+
+func TestScan_SkipsEmptyRepo(t *testing.T) {
+	client := &MockGitHubClient{
+		Repos: []Repo{
+			{Name: "empty-repo", Description: "Empty", DefaultBranch: "main"},
+			{Name: "normal-repo", Description: "Normal", DefaultBranch: "main"},
+		},
+		TreeErrs: map[string]error{
+			"empty-repo": ErrEmptyRepo,
+		},
+	}
+
+	results, err := Scan(context.Background(), client, "test-org")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+
+	// Results sorted alphabetically: empty-repo first
+	if !results[0].Skipped || results[0].SkipReason == "" {
+		t.Errorf("expected empty-repo to be skipped, got %+v", results[0])
+	}
+	if results[1].Skipped {
+		t.Errorf("expected normal-repo to not be skipped")
+	}
+	if len(results[1].Results) == 0 {
+		t.Error("expected normal-repo to have rule results")
+	}
+}
+
+func TestScan_SkipsTruncatedTree(t *testing.T) {
+	client := &MockGitHubClient{
+		Repos: []Repo{
+			{Name: "huge-repo", Description: "Huge", DefaultBranch: "main"},
+		},
+		TreeErrs: map[string]error{
+			"huge-repo": ErrTruncatedTree,
+		},
+	}
+
+	results, err := Scan(context.Background(), client, "test-org")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if !results[0].Skipped {
+		t.Error("expected huge-repo to be skipped")
+	}
+	if results[0].SkipReason == "" {
+		t.Error("expected skip reason to be set")
+	}
+}
+
+func TestScan_AbortsOnRateLimit(t *testing.T) {
+	client := &MockGitHubClient{
+		Repos: []Repo{
+			{Name: "repo-a", Description: "A", DefaultBranch: "main"},
+		},
+		TreeErr: fmt.Errorf("rate limit exceeded"),
+	}
+
+	_, err := Scan(context.Background(), client, "test-org")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+}

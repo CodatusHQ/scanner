@@ -213,3 +213,88 @@ No repos found.
 		t.Errorf("report mismatch.\n\nGOT:\n%s\n\nWANT:\n%s", got, want)
 	}
 }
+
+func TestGenerateReport_WithSkippedRepos(t *testing.T) {
+	results := []RepoResult{
+		{RepoName: "good-repo", Results: []RuleResult{
+			{RuleName: "Has repo description", Passed: true},
+		}},
+		{RepoName: "empty-repo", Skipped: true, SkipReason: "repository is empty"},
+		{RepoName: "huge-repo", Skipped: true, SkipReason: "file tree too large (truncated by GitHub API)"},
+	}
+
+	got := generateReport("test-org", results, testTime)
+
+	want := `# Codatus - Org Compliance Report
+
+**Org:** test-org
+**Scanned:** 2026-04-05 12:00 UTC
+**Repos scanned:** 1
+**Compliant:** 1/1 (100%)
+**Skipped:** 2
+
+## Summary
+
+| Rule | Passing | Failing | Pass rate |
+|------|---------|---------|----------|
+| Has repo description | 1 | 0 | 100% |
+
+## ✅ Fully compliant (1 repo)
+
+<details>
+<summary>All rules passing</summary>
+
+[good-repo](https://github.com/test-org/good-repo)
+
+</details>
+
+## ⚠️ Skipped (2 repos)
+
+<details>
+<summary><a href="https://github.com/test-org/empty-repo">empty-repo</a> - repository is empty</summary>
+
+This repository was excluded from compliance results.
+
+</details>
+
+<details>
+<summary><a href="https://github.com/test-org/huge-repo">huge-repo</a> - file tree too large (truncated by GitHub API)</summary>
+
+This repository was excluded from compliance results.
+
+</details>
+
+`
+	if got != want {
+		t.Errorf("report mismatch.\n\nGOT:\n%s\n\nWANT:\n%s", got, want)
+	}
+}
+
+func TestGenerateReport_OnlySkippedRepos(t *testing.T) {
+	results := []RepoResult{
+		{RepoName: "empty-repo", Skipped: true, SkipReason: "repository is empty"},
+	}
+
+	got := generateReport("test-org", results, testTime)
+
+	want := `# Codatus - Org Compliance Report
+
+**Org:** test-org
+**Scanned:** 2026-04-05 12:00 UTC
+**Repos scanned:** 0
+**Skipped:** 1
+
+## ⚠️ Skipped (1 repo)
+
+<details>
+<summary><a href="https://github.com/test-org/empty-repo">empty-repo</a> - repository is empty</summary>
+
+This repository was excluded from compliance results.
+
+</details>
+
+`
+	if got != want {
+		t.Errorf("report mismatch.\n\nGOT:\n%s\n\nWANT:\n%s", got, want)
+	}
+}

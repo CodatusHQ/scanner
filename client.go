@@ -2,11 +2,18 @@ package scanner
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
 
 	"github.com/google/go-github/v72/github"
+)
+
+// Sentinel errors for per-repo scan failures.
+var (
+	ErrEmptyRepo     = errors.New("repository is empty")
+	ErrTruncatedTree = errors.New("tree truncated by GitHub API")
 )
 
 // FileEntry represents a file or directory in a repo.
@@ -61,6 +68,15 @@ func newTestGitHubClient(baseURL string) GitHubClient {
 	return &realGitHubClient{client: client}
 }
 
+// isRateLimitError checks whether an error is a GitHub rate limit error
+// (primary or secondary). Rate limit errors must never be swallowed -
+// they indicate a global problem that affects all subsequent API calls.
+func isRateLimitError(err error) bool {
+	var rateLimitErr *github.RateLimitError
+	var abuseErr *github.AbuseRateLimitError
+	return errors.As(err, &rateLimitErr) || errors.As(err, &abuseErr)
+}
+
 func (c *realGitHubClient) ListRepos(ctx context.Context, org string) ([]Repo, error) {
 	var allRepos []Repo
 	opts := &github.RepositoryListByOrgOptions{
@@ -70,6 +86,9 @@ func (c *realGitHubClient) ListRepos(ctx context.Context, org string) ([]Repo, e
 	for {
 		ghRepos, resp, err := c.client.Repositories.ListByOrg(ctx, org, opts)
 		if err != nil {
+			if isRateLimitError(err) {
+				return nil, err
+			}
 			return nil, fmt.Errorf("list repos for org %s: %w", org, err)
 		}
 
@@ -92,9 +111,19 @@ func (c *realGitHubClient) ListRepos(ctx context.Context, org string) ([]Repo, e
 }
 
 func (c *realGitHubClient) GetTree(ctx context.Context, owner, repo, branch string) ([]FileEntry, error) {
-	tree, _, err := c.client.Git.GetTree(ctx, owner, repo, branch, true)
+	tree, resp, err := c.client.Git.GetTree(ctx, owner, repo, branch, true)
 	if err != nil {
+		if isRateLimitError(err) {
+			return nil, err
+		}
+		if resp != nil && resp.StatusCode == http.StatusConflict {
+			return nil, ErrEmptyRepo
+		}
 		return nil, fmt.Errorf("get tree for %s/%s: %w", owner, repo, err)
+	}
+
+	if tree.GetTruncated() {
+		return nil, ErrTruncatedTree
 	}
 
 	files := make([]FileEntry, len(tree.Entries))
@@ -111,6 +140,9 @@ func (c *realGitHubClient) GetTree(ctx context.Context, owner, repo, branch stri
 func (c *realGitHubClient) GetBranchProtection(ctx context.Context, owner, repo, branch string) (*BranchProtection, error) {
 	prot, resp, err := c.client.Repositories.GetBranchProtection(ctx, owner, repo, branch)
 	if err != nil {
+		if isRateLimitError(err) {
+			return nil, err
+		}
 		if resp != nil && (resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusForbidden) {
 			return nil, nil
 		}
@@ -130,6 +162,9 @@ func (c *realGitHubClient) GetBranchProtection(ctx context.Context, owner, repo,
 func (c *realGitHubClient) GetRulesets(ctx context.Context, owner, repo, branch string) (*BranchProtection, error) {
 	rules, resp, err := c.client.Repositories.GetRulesForBranch(ctx, owner, repo, branch, nil)
 	if err != nil {
+		if isRateLimitError(err) {
+			return nil, err
+		}
 		if resp != nil && (resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusForbidden) {
 			return nil, nil
 		}
@@ -167,6 +202,9 @@ func (c *realGitHubClient) CreateIssue(ctx context.Context, owner, repo, title, 
 
 	_, _, err := c.client.Issues.Create(ctx, owner, repo, req)
 	if err != nil {
+		if isRateLimitError(err) {
+			return err
+		}
 		return fmt.Errorf("create issue in %s/%s: %w", owner, repo, err)
 	}
 	return nil

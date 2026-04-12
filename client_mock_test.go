@@ -7,7 +7,8 @@ type MockGitHubClient struct {
 	Repos         []Repo
 	Err           error
 	Tree          map[string][]FileEntry       // repo name -> file entries
-	TreeErr       error
+	TreeErr       error                        // global tree error (used if TreeErrs is nil)
+	TreeErrs      map[string]error             // repo name -> per-repo tree error
 	Protection    map[string]*BranchProtection  // repo name -> classic branch protection
 	ProtectionErr error
 	Rulesets      map[string]*BranchProtection  // repo name -> rulesets protection
@@ -24,6 +25,11 @@ func (m *MockGitHubClient) ListRepos(ctx context.Context, org string) ([]Repo, e
 }
 
 func (m *MockGitHubClient) GetTree(ctx context.Context, owner, repo, branch string) ([]FileEntry, error) {
+	if m.TreeErrs != nil {
+		if err, ok := m.TreeErrs[repo]; ok {
+			return nil, err
+		}
+	}
 	if m.TreeErr != nil {
 		return nil, m.TreeErr
 	}
