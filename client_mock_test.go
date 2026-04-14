@@ -9,17 +9,12 @@ type MockGitHubClient struct {
 	Tree           map[string][]FileEntry       // repo name -> file entries
 	TreeErr        error                        // global tree error (used if TreeErrs is nil)
 	TreeErrs       map[string]error             // repo name -> per-repo tree error
-	Protection     map[string]*BranchProtection  // repo name -> classic branch protection
+	Protection     map[string]*BranchProtection // repo name -> classic branch protection
 	ProtectionErr  error                        // global protection error (used if ProtectionErrs is nil)
 	ProtectionErrs map[string]error             // repo name -> per-repo protection error
-	Rulesets       map[string]*BranchProtection  // repo name -> rulesets protection
+	Rulesets       map[string]*BranchProtection // repo name -> rulesets protection
 	RulesetsErr    error                        // global rulesets error (used if RulesetsErrs is nil)
 	RulesetsErrs   map[string]error             // repo name -> per-repo rulesets error
-	IssueErr       error
-	// CreatedIssue records the last CreateIssue call for assertions.
-	CreatedIssue struct {
-		Owner, Repo, Title, Body string
-	}
 }
 
 func (m *MockGitHubClient) ListRepos(ctx context.Context, org string) ([]Repo, error) {
@@ -69,12 +64,4 @@ func (m *MockGitHubClient) GetRulesets(ctx context.Context, owner, repo, branch 
 		return m.Rulesets[repo], nil
 	}
 	return nil, nil
-}
-
-func (m *MockGitHubClient) CreateIssue(ctx context.Context, owner, repo, title, body string) error {
-	m.CreatedIssue.Owner = owner
-	m.CreatedIssue.Repo = repo
-	m.CreatedIssue.Title = title
-	m.CreatedIssue.Body = body
-	return m.IssueErr
 }

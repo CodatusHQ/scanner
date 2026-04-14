@@ -1,10 +1,10 @@
 # Codatus
 
-Codatus scans every repository in a GitHub organization against a set of engineering standards and produces a Markdown compliance report posted as a GitHub Issue.
+Codatus scans every repository in a GitHub organization against a set of engineering standards and produces a Markdown compliance report.
 
 It answers one question: **does each repo in your org meet the baseline you care about?**
 
-No dashboard. No database. No setup beyond installing the GitHub App. Scan, report, done.
+This repository is a Go library and a CLI. Posting the report (e.g., as a GitHub Issue) is the caller's responsibility - the scanner returns structured results and Markdown, nothing more.
 
 ---
 
@@ -14,7 +14,8 @@ No dashboard. No database. No setup beyond installing the GitHub App. Scan, repo
 2. It lists all non-archived repositories in the org.
 3. For each repo, it runs 11 rule checks (see below).
 4. It produces a single Markdown report summarizing pass/fail per repo per rule.
-5. The report is posted as a GitHub Issue in a designated repository.
+
+The CLI prints the Markdown to stdout. Callers using the library get both the structured `[]RepoResult` and can generate the Markdown via `GenerateReport`.
 
 ---
 
@@ -148,19 +149,32 @@ Repositories are sorted alphabetically. The summary table is sorted by pass rate
 
 ## Scanner configuration
 
-The scanner module accepts a `ScanConfig` struct with the following fields:
+The scanner module accepts a `Config` struct with the following fields:
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `Org` | `string` | Yes | GitHub organization name to scan |
 | `Token` | `string` | Yes | GitHub token (PAT or GitHub App installation token) |
-| `ReportRepo` | `string` | Yes | Repository name where the compliance issue is created (org is taken from `Org`) |
+
+`Scan` also accepts functional options:
+
+| Option | Description |
+|--------|-------------|
+| `WithBaseURL(url string)` | Override the GitHub API base URL. Defaults to the public GitHub API. Useful for testing against a mock server or targeting GitHub Enterprise. |
 
 The token must have the following permissions across the org:
 - `repo` (read access to repo contents and branch protection)
 - `admin:org` (read access to list org repos)
 
 How these values are sourced (env vars, CLI flags, config file) is the responsibility of the caller, not the scanner module.
+
+## CLI
+
+The `codatus` binary reads `CODATUS_ORG` and `CODATUS_TOKEN` from the environment, runs a scan, and prints the Markdown report to stdout. Log output (scan summary, errors) goes to stderr so stdout stays clean for piping.
+
+```sh
+CODATUS_ORG=myorg CODATUS_TOKEN=ghp_... codatus > report.md
+```
 
 ---
 

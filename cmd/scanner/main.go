@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
 
@@ -11,7 +12,6 @@ import (
 func main() {
 	org := os.Getenv("CODATUS_ORG")
 	token := os.Getenv("CODATUS_TOKEN")
-	reportRepo := os.Getenv("CODATUS_REPORT_REPO") // repo name only, org is inferred from CODATUS_ORG
 
 	if org == "" {
 		log.Fatal("CODATUS_ORG is required")
@@ -19,17 +19,24 @@ func main() {
 	if token == "" {
 		log.Fatal("CODATUS_TOKEN is required")
 	}
-	if reportRepo == "" {
-		log.Fatal("CODATUS_REPORT_REPO is required")
-	}
 
-	cfg := scanner.Config{
-		Org:        org,
-		Token:      token,
-		ReportRepo: reportRepo,
-	}
+	cfg := scanner.Config{Org: org, Token: token}
 
-	if err := scanner.Run(context.Background(), cfg); err != nil {
+	results, err := scanner.Scan(context.Background(), cfg)
+	if err != nil {
 		log.Fatal(err)
 	}
+
+	scanned := 0
+	skipped := 0
+	for _, r := range results {
+		if r.Skipped() {
+			skipped++
+		} else {
+			scanned++
+		}
+	}
+	log.Printf("scanned %d repos in org %s (%d skipped)", scanned, org, skipped)
+
+	fmt.Println(scanner.GenerateReport(org, results))
 }

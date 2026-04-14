@@ -4,15 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"sort"
 )
 
 // Config holds the configuration needed to run a scan.
 type Config struct {
-	Org        string
-	Token      string
-	ReportRepo string
+	Org   string
+	Token string
 }
 
 // RepoResult holds all rule results for a single repository.
@@ -28,36 +26,29 @@ func (rr RepoResult) Skipped() bool {
 	return rr.KnownSkipReason != "" || rr.UnknownSkipError != ""
 }
 
-// Run is the high-level entry point. It constructs a client, scans the org,
-// generates a Markdown report, and posts it as a GitHub Issue.
-func Run(ctx context.Context, cfg Config) error {
-	client := NewGitHubClient(cfg.Token)
+// scanOptions holds optional parameters configurable via functional options.
+type scanOptions struct {
+	baseURL string
+}
 
-	results, err := Scan(ctx, client, cfg.Org)
-	if err != nil {
-		return fmt.Errorf("scan org %s: %w", cfg.Org, err)
+// Option configures optional scan behavior.
+type Option func(*scanOptions)
+
+// WithBaseURL sets a custom GitHub API base URL.
+// Defaults to the public GitHub API when unset. Useful for testing against
+// a mock server or pointing at a GitHub Enterprise instance.
+func WithBaseURL(url string) Option {
+	return func(o *scanOptions) { o.baseURL = url }
+}
+
+// Scan lists all non-archived repos in the org and evaluates every rule against each.
+func Scan(ctx context.Context, cfg Config, opts ...Option) ([]RepoResult, error) {
+	o := scanOptions{}
+	for _, opt := range opts {
+		opt(&o)
 	}
-
-	scanned := 0
-	skipped := 0
-	for _, r := range results {
-		if r.Skipped() {
-			skipped++
-		} else {
-			scanned++
-		}
-	}
-	log.Printf("scanned %d repos in org %s (%d skipped)", scanned, cfg.Org, skipped)
-
-	report := GenerateReport(cfg.Org, results)
-
-	title := fmt.Sprintf("Codatus - %s Compliance Report", cfg.Org)
-	if err := client.CreateIssue(ctx, cfg.Org, cfg.ReportRepo, title, report); err != nil {
-		return fmt.Errorf("post report to %s/%s: %w", cfg.Org, cfg.ReportRepo, err)
-	}
-
-	log.Printf("report posted to %s", cfg.ReportRepo)
-	return nil
+	client := newGitHubClient(cfg.Token, o.baseURL)
+	return scanWithClient(ctx, client, cfg.Org)
 }
 
 // skipReasonForError returns a human-readable skip reason and an optional raw
@@ -73,8 +64,9 @@ func skipRepo(name string, err error) RepoResult {
 	return RepoResult{RepoName: name, UnknownSkipError: err.Error()}
 }
 
-// Scan lists all non-archived repos in the org and evaluates every rule against each.
-func Scan(ctx context.Context, client GitHubClient, org string) ([]RepoResult, error) {
+// scanWithClient is the internal scan loop used by both the public Scan
+// (which constructs a real client) and by tests (which pass a mock client).
+func scanWithClient(ctx context.Context, client GitHubClient, org string) ([]RepoResult, error) {
 	repos, err := client.ListRepos(ctx, org)
 	if err != nil {
 		return nil, fmt.Errorf("list repos for org %s: %w", org, err)

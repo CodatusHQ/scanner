@@ -31,7 +31,7 @@ func TestScan_SkipsArchivedRepos(t *testing.T) {
 		},
 	}
 
-	results, err := Scan(context.Background(), client, "test-org")
+	results, err := scanWithClient(context.Background(), client, "test-org")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -53,7 +53,7 @@ func TestScan_ResultsSortedAlphabetically(t *testing.T) {
 		},
 	}
 
-	results, err := Scan(context.Background(), client, "test-org")
+	results, err := scanWithClient(context.Background(), client, "test-org")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -74,7 +74,7 @@ func TestScan_EvaluatesRulesPerRepo(t *testing.T) {
 		},
 	}
 
-	results, err := Scan(context.Background(), client, "test-org")
+	results, err := scanWithClient(context.Background(), client, "test-org")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -107,7 +107,7 @@ func TestScan_PropagatesClientError(t *testing.T) {
 		Err: fmt.Errorf("API rate limit exceeded"),
 	}
 
-	_, err := Scan(context.Background(), client, "test-org")
+	_, err := scanWithClient(context.Background(), client, "test-org")
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -126,7 +126,7 @@ func TestScan_UsesRulesetsWhenAvailable(t *testing.T) {
 		},
 	}
 
-	results, err := Scan(context.Background(), client, "test-org")
+	results, err := scanWithClient(context.Background(), client, "test-org")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -150,7 +150,7 @@ func TestScan_FallsBackToClassicProtection(t *testing.T) {
 		},
 	}
 
-	results, err := Scan(context.Background(), client, "test-org")
+	results, err := scanWithClient(context.Background(), client, "test-org")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -173,7 +173,7 @@ func TestScan_SkipsEmptyRepo(t *testing.T) {
 		},
 	}
 
-	results, err := Scan(context.Background(), client, "test-org")
+	results, err := scanWithClient(context.Background(), client, "test-org")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -204,7 +204,7 @@ func TestScan_SkipsTruncatedTree(t *testing.T) {
 		},
 	}
 
-	results, err := Scan(context.Background(), client, "test-org")
+	results, err := scanWithClient(context.Background(), client, "test-org")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -228,7 +228,7 @@ func TestScan_SkipsUnexpectedGetTreeError(t *testing.T) {
 		},
 	}
 
-	results, err := Scan(context.Background(), client, "test-org")
+	results, err := scanWithClient(context.Background(), client, "test-org")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -257,7 +257,7 @@ func TestScan_SkipsUnexpectedRulesetsError(t *testing.T) {
 		},
 	}
 
-	results, err := Scan(context.Background(), client, "test-org")
+	results, err := scanWithClient(context.Background(), client, "test-org")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -285,7 +285,7 @@ func TestScan_SkipsUnexpectedBranchProtectionError(t *testing.T) {
 		},
 	}
 
-	results, err := Scan(context.Background(), client, "test-org")
+	results, err := scanWithClient(context.Background(), client, "test-org")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -306,7 +306,7 @@ func TestScan_AbortsOnRateLimitDuringGetTree(t *testing.T) {
 		TreeErr: newRateLimitError(),
 	}
 
-	_, err := Scan(context.Background(), client, "test-org")
+	_, err := scanWithClient(context.Background(), client, "test-org")
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -320,7 +320,7 @@ func TestScan_AbortsOnRateLimitDuringGetRulesets(t *testing.T) {
 		RulesetsErr: newRateLimitError(),
 	}
 
-	_, err := Scan(context.Background(), client, "test-org")
+	_, err := scanWithClient(context.Background(), client, "test-org")
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -334,7 +334,7 @@ func TestScan_AbortsOnRateLimitDuringGetBranchProtection(t *testing.T) {
 		ProtectionErr: newRateLimitError(),
 	}
 
-	_, err := Scan(context.Background(), client, "test-org")
+	_, err := scanWithClient(context.Background(), client, "test-org")
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
