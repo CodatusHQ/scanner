@@ -15,7 +15,7 @@ func setupTestServer(t *testing.T, mux *http.ServeMux) GitHubClient {
 	t.Helper()
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)
-	return newTestGitHubClient(server.URL)
+	return newGitHubClient("test-token", server.URL)
 }
 
 // --- ListRepos ---
@@ -60,7 +60,7 @@ func TestListRepos_Pagination(t *testing.T) {
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)
 	serverURL = server.URL
-	client := newTestGitHubClient(server.URL)
+	client := newGitHubClient("test-token", server.URL)
 
 	repos, err := client.ListRepos(context.Background(), "test-org")
 	if err != nil {
@@ -391,39 +391,6 @@ func TestGetRulesets_500(t *testing.T) {
 	}
 }
 
-// --- CreateIssue ---
-
-func TestCreateIssue_Success(t *testing.T) {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/repos/org/repo/issues", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			t.Errorf("expected POST, got %s", r.Method)
-		}
-		w.WriteHeader(http.StatusCreated)
-		fmt.Fprint(w, `{"number": 42, "title": "Test Issue"}`)
-	})
-	client := setupTestServer(t, mux)
-
-	err := client.CreateIssue(context.Background(), "org", "repo", "Test Issue", "Body text")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestCreateIssue_APIError(t *testing.T) {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/repos/org/repo/issues", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusUnprocessableEntity)
-		fmt.Fprint(w, `{"message": "Validation Failed"}`)
-	})
-	client := setupTestServer(t, mux)
-
-	err := client.CreateIssue(context.Background(), "org", "repo", "Test", "Body")
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-}
-
 // --- GetTree: empty repo and truncated ---
 
 func TestGetTree_EmptyRepo_409(t *testing.T) {
@@ -528,16 +495,3 @@ func TestGetTree_RateLimit(t *testing.T) {
 	}
 }
 
-func TestCreateIssue_RateLimit(t *testing.T) {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/repos/org/repo/issues", rateLimitHandler())
-	client := setupTestServer(t, mux)
-
-	err := client.CreateIssue(context.Background(), "org", "repo", "Test", "Body")
-	if err == nil {
-		t.Fatal("expected rate limit error, got nil")
-	}
-	if !isRateLimitError(err) {
-		t.Errorf("expected rate limit error type, got: %v", err)
-	}
-}

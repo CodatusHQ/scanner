@@ -46,25 +46,25 @@ type GitHubClient interface {
 	GetTree(ctx context.Context, owner, repo, branch string) ([]FileEntry, error)
 	GetBranchProtection(ctx context.Context, owner, repo, branch string) (*BranchProtection, error)
 	GetRulesets(ctx context.Context, owner, repo, branch string) (*BranchProtection, error)
-	CreateIssue(ctx context.Context, owner, repo, title, body string) error
 }
 
 type realGitHubClient struct {
 	client *github.Client
 }
 
-// NewGitHubClient creates a GitHubClient that calls the GitHub REST API.
+// NewGitHubClient creates a GitHubClient that calls the public GitHub REST API.
 func NewGitHubClient(token string) GitHubClient {
-	return &realGitHubClient{
-		client: github.NewClient(nil).WithAuthToken(token),
-	}
+	return newGitHubClient(token, "")
 }
 
-// newTestGitHubClient creates a GitHubClient pointed at a test server URL.
-func newTestGitHubClient(baseURL string) GitHubClient {
-	client := github.NewClient(nil)
-	u, _ := url.Parse(baseURL + "/")
-	client.BaseURL = u
+// newGitHubClient creates a GitHubClient with an optional custom base URL.
+// An empty baseURL uses the default GitHub API URL.
+func newGitHubClient(token, baseURL string) GitHubClient {
+	client := github.NewClient(nil).WithAuthToken(token)
+	if baseURL != "" {
+		u, _ := url.Parse(baseURL + "/")
+		client.BaseURL = u
+	}
 	return &realGitHubClient{client: client}
 }
 
@@ -194,18 +194,3 @@ func (c *realGitHubClient) GetRulesets(ctx context.Context, owner, repo, branch 
 	return &bp, nil
 }
 
-func (c *realGitHubClient) CreateIssue(ctx context.Context, owner, repo, title, body string) error {
-	req := &github.IssueRequest{
-		Title: github.Ptr(title),
-		Body:  github.Ptr(body),
-	}
-
-	_, _, err := c.client.Issues.Create(ctx, owner, repo, req)
-	if err != nil {
-		if isRateLimitError(err) {
-			return err
-		}
-		return fmt.Errorf("create issue in %s/%s: %w", owner, repo, err)
-	}
-	return nil
-}
