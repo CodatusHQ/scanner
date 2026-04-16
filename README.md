@@ -110,7 +110,7 @@ Each rule produces a **pass** or **fail** result per repository. There are no sc
 
 ## Report format
 
-The report is a single Markdown document posted as a GitHub Issue. Structure:
+The report is a single Markdown document. Structure:
 
 ```
 # Codatus - Org Compliance Report
@@ -118,32 +118,44 @@ The report is a single Markdown document posted as a GitHub Issue. Structure:
 **Org:** {org_name}
 **Scanned:** {timestamp}
 **Repos scanned:** {count}
+**Compliant:** {n}/{total} ({percent}%)
+**Skipped:** {count}              <-- only if any repos were skipped
 
 ## Summary
 
 | Rule | Passing | Failing | Pass rate |
-|------|---------|---------|-----------|
-| Has CI workflow | 42 | 8 | 84% |
-| Has CODEOWNERS | 30 | 20 | 60% |
+|------|---------|---------|----------|
+| Has branch protection | 1 | 3 | 25% |
+| Has required reviewers | 1 | 3 | 25% |
 | ... | ... | ... | ... |
 
-## Results by repository
+## ✅ Fully compliant ({n} repos)
 
-### repo-name-1
+<details>
+<summary>All rules passing</summary>
 
-| Rule | Result |
-|------|--------|
-| Has repo description | ✅ |
-| Has .gitignore | ✅ |
-| Has substantial README | ❌ |
-| ... | ... |
+[repo-a](https://github.com/{org}/repo-a)
+[repo-b](https://github.com/{org}/repo-b)
 
-### repo-name-2
+</details>
 
-...
+## ❌ Non-compliant ({n} repos)
+
+<details>
+<summary><a href="https://github.com/{org}/repo-c">repo-c</a> - {n} failing</summary>
+
+- Has branch protection
+- Has required reviewers
+
+</details>
+
+## ⚠️ Skipped ({n} repos)          <-- only if any repos were skipped
+
+- [empty-repo](https://github.com/{org}/empty-repo) - repository is empty
+- [huge-repo](https://github.com/{org}/huge-repo) - file tree too large (truncated by GitHub API)
 ```
 
-Repositories are sorted alphabetically. The summary table is sorted by pass rate ascending (worst compliance first).
+The summary table is sorted by pass rate ascending (worst compliance first). Sections are omitted when empty (e.g., no "Fully compliant" section if all repos have failures). Skipped repos are those that could not be scanned (empty repos, truncated file trees, API errors) - they are excluded from the compliance count.
 
 ---
 
