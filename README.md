@@ -1,8 +1,8 @@
 # Codatus
 
-Codatus scans every repository in a GitHub organization against a set of engineering standards and produces a Markdown compliance report.
+Codatus scans every repository in a GitHub organization or user account against a set of engineering standards and produces a Markdown compliance report.
 
-It answers one question: **does each repo in your org meet the baseline you care about?**
+It answers one question: **does each repo in your account meet the baseline you care about?**
 
 This repository is a Go library and a CLI. Posting the report (e.g., as a GitHub Issue) is the caller's responsibility - the scanner returns structured results and Markdown, nothing more.
 
@@ -10,8 +10,8 @@ This repository is a Go library and a CLI. Posting the report (e.g., as a GitHub
 
 ## How it works
 
-1. Codatus receives a GitHub org to scan.
-2. It lists all non-archived repositories in the org.
+1. Codatus receives a GitHub account to scan (organization or user).
+2. It lists the non-archived repositories accessible to the token.
 3. For each repo, it runs 11 rule checks (see below).
 4. It produces a single Markdown report summarizing pass/fail per repo per rule.
 
@@ -161,31 +161,73 @@ The summary table is sorted by pass rate ascending (worst compliance first). Sec
 
 ## Scanner configuration
 
-The scanner module accepts a `Config` struct with the following fields:
+`scanner.Scan(ctx, auth, opts...)` takes an `Auth` - a sealed interface implemented by two concrete types. Pick the one that matches your token.
+
+### PATAuth - personal access token
+
+For scanning with a user-generated token (classic or fine-grained PAT). Scanner calls `/orgs/{Name}/repos` and falls back to `/users/{Name}/repos` on 404, so it works for both org and user accounts.
+
+```go
+results, err := scanner.Scan(ctx, scanner.PATAuth{
+    Token: "ghp_...",
+    Name:  "my-org",        // or a user login like "octocat"
+})
+```
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `Org` | `string` | Yes | GitHub organization name to scan |
-| `Token` | `string` | Yes | GitHub token (PAT or GitHub App installation token) |
+| `Token` | `string` | Yes | Personal access token |
+| `Name` | `string` | Yes | GitHub organization or user login to scan |
 
-`Scan` also accepts functional options:
+### InstallationAuth - GitHub App installation
+
+For scanning as a GitHub App. Scanner calls `/installation/repositories`, which returns exactly the repos the installation was granted access to. Works identically for org and user installs, and respects "Selected repositories" mode (no leak of other public repos).
+
+```go
+results, err := scanner.Scan(ctx, scanner.InstallationAuth{
+    Token: "ghs_...",       // short-lived installation access token
+    Name:  "my-org",        // the account the app is installed on
+})
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `Token` | `string` | Yes | Installation access token (from `/app/installations/{id}/access_tokens`) |
+| `Name` | `string` | Yes | Account the app is installed on; used for per-repo URL construction |
+
+### Options
 
 | Option | Description |
 |--------|-------------|
 | `WithBaseURL(url string)` | Override the GitHub API base URL. Defaults to the public GitHub API. Useful for testing against a mock server or targeting GitHub Enterprise. |
 
-The token must have the following permissions across the org:
-- `repo` (read access to repo contents and branch protection)
-- `admin:org` (read access to list org repos)
+### Required token permissions
+
+**Classic PAT:**
+- `repo` — read repo contents and branch protection
+- `read:org` — required when `Name` is an organization
+
+**Fine-grained PAT:** scoped to the target account, with Repository permissions:
+- Metadata: Read
+- Contents: Read
+- Administration: Read (for branch protection)
+
+**Installation token:** permissions come from the GitHub App's configured repository permissions (not PAT scopes). At minimum the app needs Contents (read) and Metadata (read); Administration (read) is required for branch protection rules to resolve.
 
 How these values are sourced (env vars, CLI flags, config file) is the responsibility of the caller, not the scanner module.
 
 ## CLI
 
-The `codatus` binary reads `CODATUS_ORG` and `CODATUS_TOKEN` from the environment, runs a scan, and prints the Markdown report to stdout. Log output (scan summary, errors) goes to stderr so stdout stays clean for piping.
+The `codatus` binary reads `CODATUS_ORG` and `CODATUS_TOKEN` from the environment, wraps them in `PATAuth`, runs a scan, and prints the Markdown report to stdout. Log output (scan summary, errors) goes to stderr so stdout stays clean for piping.
+
+Despite the name, `CODATUS_ORG` accepts either an organization slug or a user login - the library dispatches automatically.
 
 ```sh
+# Organization
 CODATUS_ORG=myorg CODATUS_TOKEN=ghp_... codatus > report.md
+
+# User account
+CODATUS_ORG=my-username CODATUS_TOKEN=ghp_... codatus > report.md
 ```
 
 ---
