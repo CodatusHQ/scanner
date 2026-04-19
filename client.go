@@ -42,7 +42,12 @@ type Repo struct {
 // GitHubClient is the interface for all GitHub API interactions.
 // The scanner depends only on this interface, making it testable via mocks.
 type GitHubClient interface {
-	ListRepos(ctx context.Context, org string) ([]Repo, error)
+	// ListReposByAccount lists repos for a named org (falls back to user on 404).
+	// Used by PAT auth.
+	ListReposByAccount(ctx context.Context, name string) ([]Repo, error)
+	// ListReposByInstallation lists the repos the current GitHub App installation
+	// was granted access to. Used by installation-token auth.
+	ListReposByInstallation(ctx context.Context) ([]Repo, error)
 	GetTree(ctx context.Context, owner, repo, branch string) ([]FileEntry, error)
 	GetBranchProtection(ctx context.Context, owner, repo, branch string) (*BranchProtection, error)
 	GetRulesets(ctx context.Context, owner, repo, branch string) (*BranchProtection, error)
@@ -77,7 +82,18 @@ func isRateLimitError(err error) bool {
 	return errors.As(err, &rateLimitErr) || errors.As(err, &abuseErr)
 }
 
-func (c *realGitHubClient) ListRepos(ctx context.Context, org string) ([]Repo, error) {
+// ListReposByAccount lists repos for a named account. Tries /orgs/{name}/repos
+// first; on 404 (not an org) falls back to /users/{name}/repos.
+func (c *realGitHubClient) ListReposByAccount(ctx context.Context, name string) ([]Repo, error) {
+	repos, err := c.listOrgRepos(ctx, name)
+	var errResp *github.ErrorResponse
+	if err != nil && errors.As(err, &errResp) && errResp.Response.StatusCode == http.StatusNotFound {
+		return c.listUserRepos(ctx, name)
+	}
+	return repos, err
+}
+
+func (c *realGitHubClient) listOrgRepos(ctx context.Context, org string) ([]Repo, error) {
 	var allRepos []Repo
 	opts := &github.RepositoryListByOrgOptions{
 		ListOptions: github.ListOptions{PerPage: 100},
@@ -93,6 +109,73 @@ func (c *realGitHubClient) ListRepos(ctx context.Context, org string) ([]Repo, e
 		}
 
 		for _, r := range ghRepos {
+			allRepos = append(allRepos, Repo{
+				Name:          r.GetName(),
+				Description:   r.GetDescription(),
+				DefaultBranch: r.GetDefaultBranch(),
+				Archived:      r.GetArchived(),
+			})
+		}
+
+		if resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
+	}
+
+	return allRepos, nil
+}
+
+func (c *realGitHubClient) listUserRepos(ctx context.Context, user string) ([]Repo, error) {
+	var allRepos []Repo
+	opts := &github.RepositoryListByUserOptions{
+		ListOptions: github.ListOptions{PerPage: 100},
+	}
+
+	for {
+		ghRepos, resp, err := c.client.Repositories.ListByUser(ctx, user, opts)
+		if err != nil {
+			if isRateLimitError(err) {
+				return nil, err
+			}
+			return nil, fmt.Errorf("list repos for user %s: %w", user, err)
+		}
+
+		for _, r := range ghRepos {
+			allRepos = append(allRepos, Repo{
+				Name:          r.GetName(),
+				Description:   r.GetDescription(),
+				DefaultBranch: r.GetDefaultBranch(),
+				Archived:      r.GetArchived(),
+			})
+		}
+
+		if resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
+	}
+
+	return allRepos, nil
+}
+
+// ListReposByInstallation lists the repositories the current GitHub App
+// installation can access. The token passed to NewGitHubClient must be an
+// installation access token.
+func (c *realGitHubClient) ListReposByInstallation(ctx context.Context) ([]Repo, error) {
+	var allRepos []Repo
+	opts := &github.ListOptions{PerPage: 100}
+
+	for {
+		result, resp, err := c.client.Apps.ListRepos(ctx, opts)
+		if err != nil {
+			if isRateLimitError(err) {
+				return nil, err
+			}
+			return nil, fmt.Errorf("list installation repos: %w", err)
+		}
+
+		for _, r := range result.Repositories {
 			allRepos = append(allRepos, Repo{
 				Name:          r.GetName(),
 				Description:   r.GetDescription(),
@@ -193,4 +276,3 @@ func (c *realGitHubClient) GetRulesets(ctx context.Context, owner, repo, branch 
 	}
 	return &bp, nil
 }
-

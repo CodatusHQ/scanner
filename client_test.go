@@ -18,9 +18,9 @@ func setupTestServer(t *testing.T, mux *http.ServeMux) GitHubClient {
 	return newGitHubClient("test-token", server.URL)
 }
 
-// --- ListRepos ---
+// --- ListReposByAccount ---
 
-func TestListRepos_SinglePage(t *testing.T) {
+func TestListReposByAccount_SinglePage(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/orgs/test-org/repos", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, `[
@@ -30,7 +30,7 @@ func TestListRepos_SinglePage(t *testing.T) {
 	})
 	client := setupTestServer(t, mux)
 
-	repos, err := client.ListRepos(context.Background(), "test-org")
+	repos, err := client.ListReposByAccount(context.Background(), "test-org")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -45,7 +45,7 @@ func TestListRepos_SinglePage(t *testing.T) {
 	}
 }
 
-func TestListRepos_Pagination(t *testing.T) {
+func TestListReposByAccount_Pagination(t *testing.T) {
 	mux := http.NewServeMux()
 	var serverURL string
 	mux.HandleFunc("/orgs/test-org/repos", func(w http.ResponseWriter, r *http.Request) {
@@ -62,7 +62,7 @@ func TestListRepos_Pagination(t *testing.T) {
 	serverURL = server.URL
 	client := newGitHubClient("test-token", server.URL)
 
-	repos, err := client.ListRepos(context.Background(), "test-org")
+	repos, err := client.ListReposByAccount(context.Background(), "test-org")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -74,7 +74,7 @@ func TestListRepos_Pagination(t *testing.T) {
 	}
 }
 
-func TestListRepos_APIError(t *testing.T) {
+func TestListReposByAccount_APIError(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/orgs/test-org/repos", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -82,9 +82,142 @@ func TestListRepos_APIError(t *testing.T) {
 	})
 	client := setupTestServer(t, mux)
 
-	_, err := client.ListRepos(context.Background(), "test-org")
+	_, err := client.ListReposByAccount(context.Background(), "test-org")
 	if err == nil {
 		t.Fatal("expected error, got nil")
+	}
+}
+
+// Non-404 errors from the org endpoint (e.g. 500 / 503) are returned directly;
+// they must not trigger a fallback to the user endpoint, which could mask a
+// real outage by succeeding against a different account surface.
+func TestListReposByAccount_500PassesThrough(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/orgs/test-org/repos", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprint(w, `{"message": "server error"}`)
+	})
+	userEndpointHit := false
+	mux.HandleFunc("/users/test-org/repos", func(w http.ResponseWriter, r *http.Request) {
+		userEndpointHit = true
+		fmt.Fprint(w, `[]`)
+	})
+	client := setupTestServer(t, mux)
+
+	_, err := client.ListReposByAccount(context.Background(), "test-org")
+	if err == nil {
+		t.Fatal("expected error from 500, got nil")
+	}
+	if userEndpointHit {
+		t.Error("user endpoint must not be called on non-404 errors")
+	}
+}
+
+// When the org endpoint returns 404 (because the name belongs to a personal
+// user account, not an org), ListReposByAccount falls back to the user endpoint.
+func TestListReposByAccount_FallsBackToUserOn404(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/orgs/test-user/repos", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		fmt.Fprint(w, `{"message": "Not Found"}`)
+	})
+	mux.HandleFunc("/users/test-user/repos", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `[
+			{"name": "personal-repo", "description": "my project", "default_branch": "main", "archived": false}
+		]`)
+	})
+	client := setupTestServer(t, mux)
+
+	repos, err := client.ListReposByAccount(context.Background(), "test-user")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(repos) != 1 || repos[0].Name != "personal-repo" {
+		t.Fatalf("expected personal-repo, got %+v", repos)
+	}
+}
+
+// --- ListReposByInstallation ---
+
+func TestListReposByInstallation_SinglePage(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/installation/repositories", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{
+			"total_count": 2,
+			"repositories": [
+				{"name": "granted-a", "description": "A", "default_branch": "main", "archived": false},
+				{"name": "granted-b", "description": "B", "default_branch": "develop", "archived": true}
+			]
+		}`)
+	})
+	client := setupTestServer(t, mux)
+
+	repos, err := client.ListReposByInstallation(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(repos) != 2 {
+		t.Fatalf("expected 2 repos, got %d", len(repos))
+	}
+	if repos[0].Name != "granted-a" || repos[0].DefaultBranch != "main" || repos[0].Archived {
+		t.Errorf("granted-a fields mismatch: %+v", repos[0])
+	}
+	if repos[1].Name != "granted-b" || repos[1].DefaultBranch != "develop" || !repos[1].Archived {
+		t.Errorf("granted-b fields mismatch: %+v", repos[1])
+	}
+}
+
+func TestListReposByInstallation_Pagination(t *testing.T) {
+	mux := http.NewServeMux()
+	var serverURL string
+	mux.HandleFunc("/installation/repositories", func(w http.ResponseWriter, r *http.Request) {
+		page := r.URL.Query().Get("page")
+		if page == "" || page == "1" {
+			w.Header().Set("Link", `<`+serverURL+`/installation/repositories?page=2>; rel="next"`)
+			fmt.Fprint(w, `{"total_count": 2, "repositories": [{"name": "page1-repo"}]}`)
+		} else {
+			fmt.Fprint(w, `{"total_count": 2, "repositories": [{"name": "page2-repo"}]}`)
+		}
+	})
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+	serverURL = server.URL
+	client := newGitHubClient("test-token", server.URL)
+
+	repos, err := client.ListReposByInstallation(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(repos) != 2 || repos[0].Name != "page1-repo" || repos[1].Name != "page2-repo" {
+		t.Errorf("pagination mismatch: %+v", repos)
+	}
+}
+
+func TestListReposByInstallation_APIError(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/installation/repositories", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprint(w, `{"message": "internal error"}`)
+	})
+	client := setupTestServer(t, mux)
+
+	_, err := client.ListReposByInstallation(context.Background())
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+}
+
+func TestListReposByInstallation_RateLimit(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/installation/repositories", rateLimitHandler())
+	client := setupTestServer(t, mux)
+
+	_, err := client.ListReposByInstallation(context.Background())
+	if err == nil {
+		t.Fatal("expected rate limit error, got nil")
+	}
+	if !isRateLimitError(err) {
+		t.Errorf("expected rate limit error type, got: %v", err)
 	}
 }
 
@@ -467,12 +600,12 @@ func TestGetRulesets_RateLimit(t *testing.T) {
 	}
 }
 
-func TestListRepos_RateLimit(t *testing.T) {
+func TestListReposByAccount_RateLimit(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/orgs/test-org/repos", rateLimitHandler())
 	client := setupTestServer(t, mux)
 
-	_, err := client.ListRepos(context.Background(), "test-org")
+	_, err := client.ListReposByAccount(context.Background(), "test-org")
 	if err == nil {
 		t.Fatal("expected rate limit error, got nil")
 	}

@@ -7,11 +7,32 @@ import (
 	"sort"
 )
 
-// Config holds the configuration needed to run a scan.
-type Config struct {
-	Org   string
-	Token string
+// Auth identifies how the scanner authenticates to GitHub. It is a sealed
+// interface — only PATAuth and InstallationAuth in this package satisfy it.
+// New auth types are added by defining a struct with an isAuth() method.
+type Auth interface {
+	isAuth()
 }
+
+// PATAuth uses a Personal Access Token targeting a named account. Scanner
+// lists repositories via /orgs/{Name}/repos and falls back to
+// /users/{Name}/repos on 404, so it works for both org and user accounts.
+type PATAuth struct {
+	Token string
+	Name  string // org or user login to scan
+}
+
+// InstallationAuth uses a GitHub App installation access token. Scanner
+// lists repositories via /installation/repositories, which returns exactly
+// the repos the installation was granted access to (no public-repo leak
+// on "Selected repositories" installs).
+type InstallationAuth struct {
+	Token string
+	Name  string // org or user login the app is installed on (used in repo URLs)
+}
+
+func (PATAuth) isAuth()          {}
+func (InstallationAuth) isAuth() {}
 
 // RepoResult holds all rule results for a single repository.
 // KnownSkipReason and UnknownSkipError are mutually exclusive.
@@ -41,19 +62,31 @@ func WithBaseURL(url string) Option {
 	return func(o *scanOptions) { o.baseURL = url }
 }
 
-// Scan lists all non-archived repos in the org and evaluates every rule against each.
-func Scan(ctx context.Context, cfg Config, opts ...Option) ([]RepoResult, error) {
+// Scan lists repositories accessible to auth and evaluates every rule
+// against each non-archived repo.
+func Scan(ctx context.Context, auth Auth, opts ...Option) ([]RepoResult, error) {
 	o := scanOptions{}
 	for _, opt := range opts {
 		opt(&o)
 	}
-	client := newGitHubClient(cfg.Token, o.baseURL)
-	return scanWithClient(ctx, client, cfg.Org)
+
+	var token string
+	switch a := auth.(type) {
+	case PATAuth:
+		token = a.Token
+	case InstallationAuth:
+		token = a.Token
+	default:
+		return nil, fmt.Errorf("unsupported auth type: %T", auth)
+	}
+
+	client := newGitHubClient(token, o.baseURL)
+	return scanWithClient(ctx, client, auth)
 }
 
-// skipReasonForError returns a human-readable skip reason and an optional raw
-// error string for unexpected failures. Known errors get a clean reason with no
-// error detail. Unknown errors get a generic reason with the error message.
+// skipRepo converts a per-repo error into a RepoResult that records the
+// skip reason. Known errors get a clean reason; unknown errors get a
+// generic reason plus the raw error message.
 func skipRepo(name string, err error) RepoResult {
 	if errors.Is(err, ErrEmptyRepo) {
 		return RepoResult{RepoName: name, KnownSkipReason: "repository is empty"}
@@ -66,10 +99,26 @@ func skipRepo(name string, err error) RepoResult {
 
 // scanWithClient is the internal scan loop used by both the public Scan
 // (which constructs a real client) and by tests (which pass a mock client).
-func scanWithClient(ctx context.Context, client GitHubClient, org string) ([]RepoResult, error) {
-	repos, err := client.ListRepos(ctx, org)
-	if err != nil {
-		return nil, fmt.Errorf("list repos for org %s: %w", org, err)
+// Listing strategy depends on the auth type.
+func scanWithClient(ctx context.Context, client GitHubClient, auth Auth) ([]RepoResult, error) {
+	var repos []Repo
+	var owner string
+
+	switch a := auth.(type) {
+	case PATAuth:
+		r, err := client.ListReposByAccount(ctx, a.Name)
+		if err != nil {
+			return nil, fmt.Errorf("list repos for %s: %w", a.Name, err)
+		}
+		repos, owner = r, a.Name
+	case InstallationAuth:
+		r, err := client.ListReposByInstallation(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("list installation repos: %w", err)
+		}
+		repos, owner = r, a.Name
+	default:
+		return nil, fmt.Errorf("unsupported auth type: %T", auth)
 	}
 
 	rules := AllRules()
@@ -80,7 +129,7 @@ func scanWithClient(ctx context.Context, client GitHubClient, org string) ([]Rep
 			continue
 		}
 
-		files, err := client.GetTree(ctx, org, repo.Name, repo.DefaultBranch)
+		files, err := client.GetTree(ctx, owner, repo.Name, repo.DefaultBranch)
 		if err != nil {
 			if isRateLimitError(err) {
 				return nil, fmt.Errorf("get tree for repo %s: %w", repo.Name, err)
@@ -90,7 +139,7 @@ func scanWithClient(ctx context.Context, client GitHubClient, org string) ([]Rep
 		}
 		repo.Files = files
 
-		protection, err := client.GetRulesets(ctx, org, repo.Name, repo.DefaultBranch)
+		protection, err := client.GetRulesets(ctx, owner, repo.Name, repo.DefaultBranch)
 		if err != nil {
 			if isRateLimitError(err) {
 				return nil, fmt.Errorf("get rulesets for repo %s: %w", repo.Name, err)
@@ -99,7 +148,7 @@ func scanWithClient(ctx context.Context, client GitHubClient, org string) ([]Rep
 			continue
 		}
 		if protection == nil {
-			protection, err = client.GetBranchProtection(ctx, org, repo.Name, repo.DefaultBranch)
+			protection, err = client.GetBranchProtection(ctx, owner, repo.Name, repo.DefaultBranch)
 			if err != nil {
 				if isRateLimitError(err) {
 					return nil, fmt.Errorf("get branch protection for repo %s: %w", repo.Name, err)

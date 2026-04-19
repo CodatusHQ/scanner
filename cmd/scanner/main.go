@@ -20,9 +20,9 @@ func main() {
 		log.Fatal("CODATUS_TOKEN is required")
 	}
 
-	cfg := scanner.Config{Org: org, Token: token}
+	auth := scanner.PATAuth{Token: token, Name: org}
 
-	results, err := scanner.Scan(context.Background(), cfg)
+	results, err := scanner.Scan(context.Background(), auth)
 	if err != nil {
 		log.Fatal(err)
 	}

@@ -3,6 +3,8 @@ package scanner
 import "context"
 
 // MockGitHubClient implements GitHubClient with canned responses for testing.
+// ListReposByAccount and ListReposByInstallation both return Repos/Err so
+// tests don't have to care which listing path was taken.
 type MockGitHubClient struct {
 	Repos          []Repo
 	Err            error
@@ -17,7 +19,11 @@ type MockGitHubClient struct {
 	RulesetsErrs   map[string]error             // repo name -> per-repo rulesets error
 }
 
-func (m *MockGitHubClient) ListRepos(ctx context.Context, org string) ([]Repo, error) {
+func (m *MockGitHubClient) ListReposByAccount(ctx context.Context, name string) ([]Repo, error) {
+	return m.Repos, m.Err
+}
+
+func (m *MockGitHubClient) ListReposByInstallation(ctx context.Context) ([]Repo, error) {
 	return m.Repos, m.Err
 }
 
