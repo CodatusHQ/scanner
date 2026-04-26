@@ -1,0 +1,278 @@
+package scanner
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/url"
+
+	"github.com/google/go-github/v72/github"
+)
+
+// Sentinel errors for per-repo scan failures.
+var (
+	ErrEmptyRepo     = errors.New("repository is empty")
+	ErrTruncatedTree = errors.New("tree truncated by GitHub API")
+)
+
+// FileEntry represents a file or directory in a repo.
+type FileEntry struct {
+	Path string // full path relative to repo root (e.g., ".github/workflows/ci.yml")
+	Size int
+	Type string // "blob" (file) or "tree" (directory)
+}
+
+// BranchProtection holds the branch protection settings the scanner needs.
+type BranchProtection struct {
+	RequiredReviewers    int
+	RequiredStatusChecks []string
+}
+
+// Repo represents a GitHub repository with the fields the scanner needs.
+type Repo struct {
+	Name             string
+	Description      string
+	DefaultBranch    string
+	Archived         bool
+	Files            []FileEntry       // all files and directories in the repo
+	BranchProtection *BranchProtection // nil if no protection configured
+}
+
+// GitHubClient is the interface for all GitHub API interactions.
+// The scanner depends only on this interface, making it testable via mocks.
+type GitHubClient interface {
+	// ListReposByAccount lists repos for a named org (falls back to user on 404).
+	// Used by PAT auth.
+	ListReposByAccount(ctx context.Context, name string) ([]Repo, error)
+	// ListReposByInstallation lists the repos the current GitHub App installation
+	// was granted access to. Used by installation-token auth.
+	ListReposByInstallation(ctx context.Context) ([]Repo, error)
+	GetTree(ctx context.Context, owner, repo, branch string) ([]FileEntry, error)
+	GetBranchProtection(ctx context.Context, owner, repo, branch string) (*BranchProtection, error)
+	GetRulesets(ctx context.Context, owner, repo, branch string) (*BranchProtection, error)
+}
+
+type realGitHubClient struct {
+	client *github.Client
+}
+
+// NewGitHubClient creates a GitHubClient that calls the public GitHub REST API.
+func NewGitHubClient(token string) GitHubClient {
+	return newGitHubClient(token, "")
+}
+
+// newGitHubClient creates a GitHubClient with an optional custom base URL.
+// An empty baseURL uses the default GitHub API URL.
+func newGitHubClient(token, baseURL string) GitHubClient {
+	client := github.NewClient(nil).WithAuthToken(token)
+	if baseURL != "" {
+		u, _ := url.Parse(baseURL + "/")
+		client.BaseURL = u
+	}
+	return &realGitHubClient{client: client}
+}
+
+// isRateLimitError checks whether an error is a GitHub rate limit error
+// (primary or secondary). Rate limit errors must never be swallowed -
+// they indicate a global problem that affects all subsequent API calls.
+func isRateLimitError(err error) bool {
+	var rateLimitErr *github.RateLimitError
+	var abuseErr *github.AbuseRateLimitError
+	return errors.As(err, &rateLimitErr) || errors.As(err, &abuseErr)
+}
+
+// ListReposByAccount lists repos for a named account. Tries /orgs/{name}/repos
+// first; on 404 (not an org) falls back to /users/{name}/repos.
+func (c *realGitHubClient) ListReposByAccount(ctx context.Context, name string) ([]Repo, error) {
+	repos, err := c.listOrgRepos(ctx, name)
+	var errResp *github.ErrorResponse
+	if err != nil && errors.As(err, &errResp) && errResp.Response.StatusCode == http.StatusNotFound {
+		return c.listUserRepos(ctx, name)
+	}
+	return repos, err
+}
+
+func (c *realGitHubClient) listOrgRepos(ctx context.Context, org string) ([]Repo, error) {
+	var allRepos []Repo
+	opts := &github.RepositoryListByOrgOptions{
+		ListOptions: github.ListOptions{PerPage: 100},
+	}
+
+	for {
+		ghRepos, resp, err := c.client.Repositories.ListByOrg(ctx, org, opts)
+		if err != nil {
+			if isRateLimitError(err) {
+				return nil, err
+			}
+			return nil, fmt.Errorf("list repos for org %s: %w", org, err)
+		}
+
+		for _, r := range ghRepos {
+			allRepos = append(allRepos, Repo{
+				Name:          r.GetName(),
+				Description:   r.GetDescription(),
+				DefaultBranch: r.GetDefaultBranch(),
+				Archived:      r.GetArchived(),
+			})
+		}
+
+		if resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
+	}
+
+	return allRepos, nil
+}
+
+func (c *realGitHubClient) listUserRepos(ctx context.Context, user string) ([]Repo, error) {
+	var allRepos []Repo
+	opts := &github.RepositoryListByUserOptions{
+		ListOptions: github.ListOptions{PerPage: 100},
+	}
+
+	for {
+		ghRepos, resp, err := c.client.Repositories.ListByUser(ctx, user, opts)
+		if err != nil {
+			if isRateLimitError(err) {
+				return nil, err
+			}
+			return nil, fmt.Errorf("list repos for user %s: %w", user, err)
+		}
+
+		for _, r := range ghRepos {
+			allRepos = append(allRepos, Repo{
+				Name:          r.GetName(),
+				Description:   r.GetDescription(),
+				DefaultBranch: r.GetDefaultBranch(),
+				Archived:      r.GetArchived(),
+			})
+		}
+
+		if resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
+	}
+
+	return allRepos, nil
+}
+
+// ListReposByInstallation lists the repositories the current GitHub App
+// installation can access. The token passed to NewGitHubClient must be an
+// installation access token.
+func (c *realGitHubClient) ListReposByInstallation(ctx context.Context) ([]Repo, error) {
+	var allRepos []Repo
+	opts := &github.ListOptions{PerPage: 100}
+
+	for {
+		result, resp, err := c.client.Apps.ListRepos(ctx, opts)
+		if err != nil {
+			if isRateLimitError(err) {
+				return nil, err
+			}
+			return nil, fmt.Errorf("list installation repos: %w", err)
+		}
+
+		for _, r := range result.Repositories {
+			allRepos = append(allRepos, Repo{
+				Name:          r.GetName(),
+				Description:   r.GetDescription(),
+				DefaultBranch: r.GetDefaultBranch(),
+				Archived:      r.GetArchived(),
+			})
+		}
+
+		if resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
+	}
+
+	return allRepos, nil
+}
+
+func (c *realGitHubClient) GetTree(ctx context.Context, owner, repo, branch string) ([]FileEntry, error) {
+	tree, resp, err := c.client.Git.GetTree(ctx, owner, repo, branch, true)
+	if err != nil {
+		if isRateLimitError(err) {
+			return nil, err
+		}
+		if resp != nil && resp.StatusCode == http.StatusConflict {
+			return nil, ErrEmptyRepo
+		}
+		return nil, fmt.Errorf("get tree for %s/%s: %w", owner, repo, err)
+	}
+
+	if tree.GetTruncated() {
+		return nil, ErrTruncatedTree
+	}
+
+	files := make([]FileEntry, len(tree.Entries))
+	for i, e := range tree.Entries {
+		files[i] = FileEntry{
+			Path: e.GetPath(),
+			Type: e.GetType(),
+			Size: e.GetSize(),
+		}
+	}
+	return files, nil
+}
+
+func (c *realGitHubClient) GetBranchProtection(ctx context.Context, owner, repo, branch string) (*BranchProtection, error) {
+	prot, resp, err := c.client.Repositories.GetBranchProtection(ctx, owner, repo, branch)
+	if err != nil {
+		if isRateLimitError(err) {
+			return nil, err
+		}
+		if resp != nil && (resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusForbidden) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("get branch protection for %s/%s: %w", owner, repo, err)
+	}
+
+	bp := &BranchProtection{}
+	if prot.RequiredPullRequestReviews != nil {
+		bp.RequiredReviewers = prot.RequiredPullRequestReviews.RequiredApprovingReviewCount
+	}
+	if prot.RequiredStatusChecks != nil && prot.RequiredStatusChecks.Contexts != nil {
+		bp.RequiredStatusChecks = *prot.RequiredStatusChecks.Contexts
+	}
+	return bp, nil
+}
+
+func (c *realGitHubClient) GetRulesets(ctx context.Context, owner, repo, branch string) (*BranchProtection, error) {
+	rules, resp, err := c.client.Repositories.GetRulesForBranch(ctx, owner, repo, branch, nil)
+	if err != nil {
+		if isRateLimitError(err) {
+			return nil, err
+		}
+		if resp != nil && (resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusForbidden) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("get branch rules for %s/%s: %w", owner, repo, err)
+	}
+
+	var bp BranchProtection
+	found := false
+
+	for _, pr := range rules.PullRequest {
+		found = true
+		if pr.Parameters.RequiredApprovingReviewCount > bp.RequiredReviewers {
+			bp.RequiredReviewers = pr.Parameters.RequiredApprovingReviewCount
+		}
+	}
+
+	for _, sc := range rules.RequiredStatusChecks {
+		found = true
+		for _, check := range sc.Parameters.RequiredStatusChecks {
+			bp.RequiredStatusChecks = append(bp.RequiredStatusChecks, check.Context)
+		}
+	}
+
+	if !found {
+		return nil, nil
+	}
+	return &bp, nil
+}
