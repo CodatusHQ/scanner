@@ -32,28 +32,21 @@ Each rule produces a **pass** or **fail** result per repository. There are no sc
 **Pass:** description is set and non-empty.
 **Fail:** description is blank or not set.
 
-#### 2. Has .gitignore
-
-**Check:** a `.gitignore` file exists in the repo root.
-
-**Pass:** file found.
-**Fail:** file not found.
-
-#### 3. Has substantial README
+#### 2. Has substantial README
 
 **Check:** a `README.md` file exists in the repo root and is larger than 2048 bytes.
 
 **Pass:** `README.md` exists and is >2048 bytes.
 **Fail:** `README.md` is missing, or exists but is ≤2048 bytes.
 
-#### 4. Has LICENSE
+#### 3. Has LICENSE
 
 **Check:** a `LICENSE` or `LICENSE.md` file exists in the repo root.
 
 **Pass:** file found.
 **Fail:** file not found.
 
-#### 5. Has SECURITY.md
+#### 4. Has SECURITY.md
 
 **Check:** a `SECURITY.md` file exists in the repo root or `.github/SECURITY.md`.
 
@@ -62,21 +55,21 @@ Each rule produces a **pass** or **fail** result per repository. There are no sc
 
 ### Code quality & process
 
-#### 6. Has CI workflow
+#### 5. Has CI workflow
 
 **Check:** at least one file exists under `.github/workflows/` with a `.yml` or `.yaml` extension.
 
 **Pass:** one or more workflow files found.
 **Fail:** `.github/workflows/` is missing or empty.
 
-#### 7. Has test directory
+#### 6. Has test directory
 
 **Check:** a directory exists at the repo root level whose name indicates tests. Recognized names: `test`, `tests`, `__tests__`, `spec`, `specs`.
 
 **Pass:** at least one matching directory found.
 **Fail:** none found.
 
-#### 8. Has CODEOWNERS
+#### 7. Has CODEOWNERS
 
 **Check:** a `CODEOWNERS` file exists in one of the three standard locations: root (`/CODEOWNERS`), `docs/CODEOWNERS`, or `.github/CODEOWNERS`.
 
@@ -85,26 +78,35 @@ Each rule produces a **pass** or **fail** result per repository. There are no sc
 
 ### Branch protection
 
-#### 9. Has branch protection
+#### 8. Has branch protection
 
 **Check:** the default branch has branch protection rules enabled (via the GitHub API's branch protection endpoint).
 
 **Pass:** branch protection is enabled on the default branch.
 **Fail:** branch protection is not enabled, or the API returns 404 (no protection configured).
 
-#### 10. Has required reviewers
+#### 9. Has required reviewers
 
 **Check:** the default branch's branch protection rules require at least one approving review before merging (via the GitHub API - `required_pull_request_reviews.required_approving_review_count >= 1`).
 
 **Pass:** required reviewers is set to 1 or more.
 **Fail:** required reviewers is not configured, or set to 0, or branch protection is not enabled.
 
-#### 11. Requires status checks before merging
+#### 10. Requires status checks before merging
 
 **Check:** the default branch's branch protection rules require at least one status check to pass before merging (via the GitHub API - `required_status_checks` is configured with one or more contexts).
 
 **Pass:** at least one required status check is configured.
 **Fail:** required status checks are not configured, or the list of required contexts is empty, or branch protection is not enabled.
+
+### Activity
+
+#### 11. Has activity
+
+**Check:** the most recent push to any branch is within the last 12 months (via the GitHub API's `pushed_at` field on the repository).
+
+**Pass:** the repository was pushed within the last 12 months.
+**Fail:** the repository has not been pushed in the last 12 months, or has never been pushed. Archived repositories are filtered out before scanning, so they never reach this rule.
 
 ---
 
@@ -137,7 +139,10 @@ The report is a single Markdown document. Structure:
 
 **How to fix:** ...
 
-### Has .gitignore
+### Has substantial README
+...
+
+### Has activity
 ...
 
 </details>
