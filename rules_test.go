@@ -1,6 +1,9 @@
 package scanner
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestHasRepoDescription_Pass(t *testing.T) {
 	rule := HasRepoDescription{}
@@ -26,27 +29,53 @@ func TestHasRepoDescription_Fail_WhitespaceOnly(t *testing.T) {
 	}
 }
 
-func TestHasGitignore_Pass(t *testing.T) {
-	rule := HasGitignore{}
+func TestHasActivity_Pass_RecentPush(t *testing.T) {
+	now := time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC)
+	rule := HasActivity{Now: now}
 
-	if !rule.Check(Repo{Files: []FileEntry{{Path: ".gitignore"}}}) {
-		t.Error("expected pass when .gitignore exists")
+	// Pushed 6 months ago - within the 12-month window.
+	if !rule.Check(Repo{PushedAt: now.AddDate(0, -6, 0)}) {
+		t.Error("expected pass for repo pushed 6 months ago")
 	}
 }
 
-func TestHasGitignore_Fail(t *testing.T) {
-	rule := HasGitignore{}
+func TestHasActivity_Fail_OldPush(t *testing.T) {
+	now := time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC)
+	rule := HasActivity{Now: now}
 
-	if rule.Check(Repo{Files: []FileEntry{{Path: "README.md"}}}) {
-		t.Error("expected fail when .gitignore is missing")
+	// Pushed 2 years ago - outside the 12-month window.
+	if rule.Check(Repo{PushedAt: now.AddDate(-2, 0, 0)}) {
+		t.Error("expected fail for repo pushed 2 years ago")
 	}
 }
 
-func TestHasGitignore_Fail_EmptyFiles(t *testing.T) {
-	rule := HasGitignore{}
+func TestHasActivity_Fail_ExactlyOneYearAgo(t *testing.T) {
+	now := time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC)
+	rule := HasActivity{Now: now}
 
-	if rule.Check(Repo{Files: nil}) {
-		t.Error("expected fail when file list is empty")
+	// Pushed exactly 12 months ago (boundary): the window is "after now-1y",
+	// so the boundary itself is NOT after now-1y - it should fail.
+	if rule.Check(Repo{PushedAt: now.AddDate(-1, 0, 0)}) {
+		t.Error("expected fail for repo pushed exactly 12 months ago (boundary)")
+	}
+}
+
+func TestHasActivity_Fail_ZeroPushedAt(t *testing.T) {
+	now := time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC)
+	rule := HasActivity{Now: now}
+
+	// Zero PushedAt (e.g. repo never pushed) should fail.
+	if rule.Check(Repo{}) {
+		t.Error("expected fail when PushedAt is zero")
+	}
+}
+
+func TestHasActivity_DefaultsToTimeNow(t *testing.T) {
+	rule := HasActivity{} // Now is zero - falls back to time.Now()
+
+	// A repo pushed yesterday must pass regardless of when this test runs.
+	if !rule.Check(Repo{PushedAt: time.Now().Add(-24 * time.Hour)}) {
+		t.Error("expected pass for repo pushed yesterday with default Now")
 	}
 }
 

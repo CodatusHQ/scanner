@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"time"
 
 	"github.com/google/go-github/v72/github"
 )
@@ -35,6 +36,7 @@ type Repo struct {
 	Description      string
 	DefaultBranch    string
 	Archived         bool
+	PushedAt         time.Time         // most recent push to any branch (from list-repos)
 	Files            []FileEntry       // all files and directories in the repo
 	BranchProtection *BranchProtection // nil if no protection configured
 }
@@ -114,6 +116,7 @@ func (c *realGitHubClient) listOrgRepos(ctx context.Context, org string) ([]Repo
 				Description:   r.GetDescription(),
 				DefaultBranch: r.GetDefaultBranch(),
 				Archived:      r.GetArchived(),
+				PushedAt:      r.GetPushedAt().Time,
 			})
 		}
 
@@ -147,6 +150,7 @@ func (c *realGitHubClient) listUserRepos(ctx context.Context, user string) ([]Re
 				Description:   r.GetDescription(),
 				DefaultBranch: r.GetDefaultBranch(),
 				Archived:      r.GetArchived(),
+				PushedAt:      r.GetPushedAt().Time,
 			})
 		}
 
@@ -181,6 +185,7 @@ func (c *realGitHubClient) ListReposByInstallation(ctx context.Context) ([]Repo,
 				Description:   r.GetDescription(),
 				DefaultBranch: r.GetDefaultBranch(),
 				Archived:      r.GetArchived(),
+				PushedAt:      r.GetPushedAt().Time,
 			})
 		}
 

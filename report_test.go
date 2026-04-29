@@ -12,11 +12,11 @@ func TestGenerateReport_MixedCompliance(t *testing.T) {
 	results := []RepoResult{
 		{RepoName: "alpha", Results: []RuleResult{
 			{RuleName: "Has repo description", Passed: true},
-			{RuleName: "Has .gitignore", Passed: true},
+			{RuleName: "Has activity", Passed: true},
 		}},
 		{RepoName: "beta", Results: []RuleResult{
 			{RuleName: "Has repo description", Passed: false},
-			{RuleName: "Has .gitignore", Passed: true},
+			{RuleName: "Has activity", Passed: true},
 		}},
 	}
 
@@ -34,7 +34,7 @@ func TestGenerateReport_MixedCompliance(t *testing.T) {
 | Rule | Passing | Failing | Pass rate |
 |------|---------|---------|----------|
 | Has repo description | 1 | 1 | 50% |
-| Has .gitignore | 2 | 0 | 100% |
+| Has activity | 2 | 0 | 100% |
 
 <details>
 <summary>Rule reference - what each rule checks and how to fix it</summary>
@@ -44,10 +44,10 @@ func TestGenerateReport_MixedCompliance(t *testing.T) {
 
 **How to fix:** Edit the repo and add a one-line description.
 
-### Has .gitignore
-**What it checks:** A .gitignore file exists at the repository root.
+### Has activity
+**What it checks:** The repository has had a commit (push) within the last 12 months.
 
-**How to fix:** Add a .gitignore at the repo root. [GitHub publishes templates per language](https://github.com/github/gitignore).
+**How to fix:** Push a commit, or archive the repository if it is no longer maintained.
 
 </details>
 

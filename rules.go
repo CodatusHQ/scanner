@@ -2,6 +2,7 @@ package scanner
 
 import (
 	"strings"
+	"time"
 )
 
 // Rule defines a named check that produces a pass/fail result for a repo.
@@ -24,7 +25,6 @@ type RuleResult struct {
 func AllRules() []Rule {
 	return []Rule{
 		HasRepoDescription{},
-		HasGitignore{},
 		HasSubstantialReadme{},
 		HasLicense{},
 		HasSecurityMd{},
@@ -34,6 +34,7 @@ func AllRules() []Rule {
 		HasBranchProtection{},
 		HasRequiredReviewers{},
 		HasRequiredStatusChecks{},
+		HasActivity{},
 	}
 }
 
@@ -49,20 +50,6 @@ func (r HasRepoDescription) Description() string {
 }
 func (r HasRepoDescription) HowToFix() string {
 	return "Edit the repo and add a one-line description."
-}
-
-// HasGitignore checks that a .gitignore file exists in the repo root.
-type HasGitignore struct{}
-
-func (r HasGitignore) Name() string { return "Has .gitignore" }
-func (r HasGitignore) Check(repo Repo) bool {
-	return hasFile(repo.Files, ".gitignore")
-}
-func (r HasGitignore) Description() string {
-	return "A .gitignore file exists at the repository root."
-}
-func (r HasGitignore) HowToFix() string {
-	return "Add a .gitignore at the repo root. [GitHub publishes templates per language](https://github.com/github/gitignore)."
 }
 
 // HasSubstantialReadme checks that README.md exists and is larger than 2048 bytes.
@@ -204,6 +191,28 @@ func (r HasRequiredStatusChecks) Description() string {
 }
 func (r HasRequiredStatusChecks) HowToFix() string {
 	return `In repo Settings > Branches, edit the default-branch protection rule and turn on "Require status checks to pass before merging".`
+}
+
+// HasActivity checks that the repo has had a commit (push) within the last
+// 12 months. Set Now to a fixed time for deterministic testing; the zero
+// value means time.Now() is used at check time.
+type HasActivity struct {
+	Now time.Time
+}
+
+func (r HasActivity) Name() string { return "Has activity" }
+func (r HasActivity) Check(repo Repo) bool {
+	now := r.Now
+	if now.IsZero() {
+		now = time.Now()
+	}
+	return repo.PushedAt.After(now.AddDate(-1, 0, 0))
+}
+func (r HasActivity) Description() string {
+	return "The repository has had a commit (push) within the last 12 months."
+}
+func (r HasActivity) HowToFix() string {
+	return "Push a commit, or archive the repository if it is no longer maintained."
 }
 
 func findFile(files []FileEntry, path string) (FileEntry, bool) {
