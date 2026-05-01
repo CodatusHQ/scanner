@@ -40,14 +40,16 @@ func TestGenerateReport_MixedCompliance(t *testing.T) {
 <summary>Rule reference - what each rule checks and how to fix it</summary>
 
 ### Has repo description
-**What it checks:** The repository has a non-empty description set in repo settings (visible at the top of the GitHub repo page).
 
-**How to fix:** Edit the repo and add a one-line description.
+- **What it checks:** The repository has a non-empty description set in repo settings (visible at the top of the GitHub repo page).
+- **How to fix:** Edit the repo and add a one-line description.
+
+---
 
 ### Has activity
-**What it checks:** The repository has had a commit (push) within the last 12 months.
 
-**How to fix:** Push a commit, or archive the repository if it is no longer maintained.
+- **What it checks:** The repository has had a commit (push) within the last 12 months.
+- **How to fix:** Push a commit, or archive the repository if it is no longer maintained.
 
 </details>
 
@@ -259,9 +261,9 @@ func TestGenerateReport_WithSkippedRepos(t *testing.T) {
 <summary>Rule reference - what each rule checks and how to fix it</summary>
 
 ### Has repo description
-**What it checks:** The repository has a non-empty description set in repo settings (visible at the top of the GitHub repo page).
 
-**How to fix:** Edit the repo and add a one-line description.
+- **What it checks:** The repository has a non-empty description set in repo settings (visible at the top of the GitHub repo page).
+- **How to fix:** Edit the repo and add a one-line description.
 
 </details>
 
