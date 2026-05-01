@@ -22,7 +22,7 @@ func TestGenerateReport_MixedCompliance(t *testing.T) {
 
 	got := generateReport("test-org", results, testTime)
 
-	want := `# Codatus - Org Compliance Report
+	want := `# Codatus - Engineering Standards Scorecard
 
 **Org:** test-org
 **Scanned:** 2026-04-05 12:00 UTC
@@ -83,7 +83,7 @@ func TestGenerateReport_AllCompliant(t *testing.T) {
 
 	got := generateReport("my-org", results, testTime)
 
-	want := `# Codatus - Org Compliance Report
+	want := `# Codatus - Engineering Standards Scorecard
 
 **Org:** my-org
 **Scanned:** 2026-04-05 12:00 UTC
@@ -125,7 +125,7 @@ func TestGenerateReport_AllNonCompliant(t *testing.T) {
 
 	got := generateReport("test-org", results, testTime)
 
-	want := `# Codatus - Org Compliance Report
+	want := `# Codatus - Engineering Standards Scorecard
 
 **Org:** test-org
 **Scanned:** 2026-04-05 12:00 UTC
@@ -176,7 +176,7 @@ func TestGenerateReport_SummarySortedByPassRateAscending(t *testing.T) {
 
 	got := generateReport("test-org", results, testTime)
 
-	want := `# Codatus - Org Compliance Report
+	want := `# Codatus - Engineering Standards Scorecard
 
 **Org:** test-org
 **Scanned:** 2026-04-05 12:00 UTC
@@ -217,7 +217,7 @@ func TestGenerateReport_SummarySortedByPassRateAscending(t *testing.T) {
 func TestGenerateReport_EmptyResults(t *testing.T) {
 	got := generateReport("empty-org", nil, testTime)
 
-	want := `# Codatus - Org Compliance Report
+	want := `# Codatus - Engineering Standards Scorecard
 
 **Org:** empty-org
 **Scanned:** 2026-04-05 12:00 UTC
@@ -241,7 +241,7 @@ func TestGenerateReport_WithSkippedRepos(t *testing.T) {
 
 	got := generateReport("test-org", results, testTime)
 
-	want := `# Codatus - Org Compliance Report
+	want := `# Codatus - Engineering Standards Scorecard
 
 **Org:** test-org
 **Scanned:** 2026-04-05 12:00 UTC
@@ -291,7 +291,7 @@ func TestGenerateReport_OnlySkippedRepos(t *testing.T) {
 
 	got := generateReport("test-org", results, testTime)
 
-	want := `# Codatus - Org Compliance Report
+	want := `# Codatus - Engineering Standards Scorecard
 
 **Org:** test-org
 **Scanned:** 2026-04-05 12:00 UTC
@@ -315,7 +315,7 @@ func TestGenerateReport_WithUnexpectedSkipError(t *testing.T) {
 
 	got := generateReport("test-org", results, testTime)
 
-	want := `# Codatus - Org Compliance Report
+	want := `# Codatus - Engineering Standards Scorecard
 
 **Org:** test-org
 **Scanned:** 2026-04-05 12:00 UTC

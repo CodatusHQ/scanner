@@ -4,12 +4,12 @@
 Codatus is a scanner that checks GitHub repos against configurable engineering standards.
 It connects to a GitHub org via the GitHub API, scans every repo against a set of rules
 (file existence, GitHub API-based checks), and returns structured results plus a Markdown
-compliance report.
+scorecard.
 
 This repository is a Go library and a CLI. No database. No web UI. No persistence.
 Scan returns results; the caller decides what to do with them.
 
-The CLI prints the report to stdout. Posting the report (e.g., as a GitHub Issue) is the
+The CLI prints the scorecard to stdout. Posting it (e.g., as a GitHub Issue) is the
 caller's responsibility - the Codatus App repository handles the app/UI/issue flow.
 Domain specification (rules, report structure) lives in `README.md`.
 
