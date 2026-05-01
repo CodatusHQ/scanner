@@ -22,21 +22,13 @@ func main() {
 
 	auth := scanner.PATAuth{Token: token, Name: org}
 
-	results, err := scanner.Scan(context.Background(), auth)
+	sr, err := scanner.Scan(context.Background(), auth)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	scanned := 0
-	skipped := 0
-	for _, r := range results {
-		if r.Skipped() {
-			skipped++
-		} else {
-			scanned++
-		}
-	}
-	log.Printf("scanned %d repos in org %s (%d skipped)", scanned, org, skipped)
+	log.Printf("org=%s total=%d forks_excluded=%d archived_excluded=%d scanned=%d skipped=%d",
+		sr.Org, sr.TotalRepos, sr.ForksExcluded, sr.ArchivedExcluded, len(sr.Results), len(sr.Skipped))
 
-	fmt.Println(scanner.GenerateReport(org, results))
+	fmt.Println(scanner.GenerateReport(sr))
 }

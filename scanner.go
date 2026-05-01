@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"time"
 )
 
 // Auth identifies how the scanner authenticates to GitHub. It is a sealed
@@ -38,6 +39,7 @@ func (InstallationAuth) isAuth() {}
 // KnownSkipReason and UnknownSkipError are mutually exclusive.
 type RepoResult struct {
 	RepoName         string
+	MostRecentCommit time.Time // PushedAt from the listing; zero if unknown
 	Results          []RuleResult
 	KnownSkipReason  string
 	UnknownSkipError string
@@ -45,6 +47,24 @@ type RepoResult struct {
 
 func (rr RepoResult) Skipped() bool {
 	return rr.KnownSkipReason != "" || rr.UnknownSkipError != ""
+}
+
+// ScanResult bundles the scan outcome with the listing-time exclusion counts
+// the scanner accumulates while filtering archived and forked repos. The
+// counts let callers report a full breakdown ("32 total, 4 forks excluded,
+// 2 archived excluded, 26 scanned") without re-querying GitHub.
+//
+// The library does not expose a precomputed "most recent commit across the
+// org" — each RepoResult carries its own MostRecentCommit and consumers
+// aggregate as needed.
+type ScanResult struct {
+	Org              string
+	ScannedAt        time.Time
+	TotalRepos       int          // total repos returned by GitHub before any filtering
+	ArchivedExcluded int          // archived repos filtered out at listing time
+	ForksExcluded    int          // forked repos filtered out at listing time
+	Skipped          []RepoResult // empty repos, truncated trees, or unexpected errors during the scan
+	Results          []RepoResult // repos that finished scanning (success or fail per-rule)
 }
 
 // scanOptions holds optional parameters configurable via functional options.
@@ -63,8 +83,10 @@ func WithBaseURL(url string) Option {
 }
 
 // Scan lists repositories accessible to auth and evaluates every rule
-// against each non-archived repo.
-func Scan(ctx context.Context, auth Auth, opts ...Option) ([]RepoResult, error) {
+// against each non-archived, non-forked repo. Forks and archived repos
+// are excluded at listing time and surface in the returned ScanResult's
+// ForksExcluded / ArchivedExcluded counts.
+func Scan(ctx context.Context, auth Auth, opts ...Option) (ScanResult, error) {
 	o := scanOptions{}
 	for _, opt := range opts {
 		opt(&o)
@@ -77,7 +99,7 @@ func Scan(ctx context.Context, auth Auth, opts ...Option) ([]RepoResult, error) 
 	case InstallationAuth:
 		token = a.Token
 	default:
-		return nil, fmt.Errorf("unsupported auth type: %T", auth)
+		return ScanResult{}, fmt.Errorf("unsupported auth type: %T", auth)
 	}
 
 	client := newGitHubClient(token, o.baseURL)
@@ -86,21 +108,29 @@ func Scan(ctx context.Context, auth Auth, opts ...Option) ([]RepoResult, error) 
 
 // skipRepo converts a per-repo error into a RepoResult that records the
 // skip reason. Known errors get a clean reason; unknown errors get a
-// generic reason plus the raw error message.
-func skipRepo(name string, err error) RepoResult {
-	if errors.Is(err, ErrEmptyRepo) {
-		return RepoResult{RepoName: name, KnownSkipReason: "repository is empty"}
+// generic reason plus the raw error message. Carries PushedAt forward as
+// MostRecentCommit so consumers aggregating org-level activity can include
+// skipped repos (a repo can be empty/truncated and still have recent pushes).
+func skipRepo(repo Repo, err error) RepoResult {
+	rr := RepoResult{
+		RepoName:         repo.Name,
+		MostRecentCommit: repo.PushedAt,
 	}
-	if errors.Is(err, ErrTruncatedTree) {
-		return RepoResult{RepoName: name, KnownSkipReason: "file tree too large (truncated by GitHub API)"}
+	switch {
+	case errors.Is(err, ErrEmptyRepo):
+		rr.KnownSkipReason = "repository is empty"
+	case errors.Is(err, ErrTruncatedTree):
+		rr.KnownSkipReason = "file tree too large (truncated by GitHub API)"
+	default:
+		rr.UnknownSkipError = err.Error()
 	}
-	return RepoResult{RepoName: name, UnknownSkipError: err.Error()}
+	return rr
 }
 
 // scanWithClient is the internal scan loop used by both the public Scan
 // (which constructs a real client) and by tests (which pass a mock client).
 // Listing strategy depends on the auth type.
-func scanWithClient(ctx context.Context, client GitHubClient, auth Auth) ([]RepoResult, error) {
+func scanWithClient(ctx context.Context, client GitHubClient, auth Auth) (ScanResult, error) {
 	var repos []Repo
 	var owner string
 
@@ -108,70 +138,92 @@ func scanWithClient(ctx context.Context, client GitHubClient, auth Auth) ([]Repo
 	case PATAuth:
 		r, err := client.ListReposByAccount(ctx, a.Name)
 		if err != nil {
-			return nil, fmt.Errorf("list repos for %s: %w", a.Name, err)
+			return ScanResult{}, fmt.Errorf("list repos for %s: %w", a.Name, err)
 		}
 		repos, owner = r, a.Name
 	case InstallationAuth:
 		r, err := client.ListReposByInstallation(ctx)
 		if err != nil {
-			return nil, fmt.Errorf("list installation repos: %w", err)
+			return ScanResult{}, fmt.Errorf("list installation repos: %w", err)
 		}
 		repos, owner = r, a.Name
 	default:
-		return nil, fmt.Errorf("unsupported auth type: %T", auth)
+		return ScanResult{}, fmt.Errorf("unsupported auth type: %T", auth)
+	}
+
+	sr := ScanResult{
+		Org:        owner,
+		ScannedAt:  time.Now().UTC(),
+		TotalRepos: len(repos),
 	}
 
 	rules := AllRules()
-	var results []RepoResult
+	var allResults []RepoResult
 
 	for _, repo := range repos {
 		if repo.Archived {
+			sr.ArchivedExcluded++
+			continue
+		}
+		if repo.Fork {
+			sr.ForksExcluded++
 			continue
 		}
 
 		files, err := client.GetTree(ctx, owner, repo.Name, repo.DefaultBranch)
 		if err != nil {
-			if isRateLimitError(err) {
-				return nil, fmt.Errorf("get tree for repo %s: %w", repo.Name, err)
+			if IsRateLimitError(err) {
+				return ScanResult{}, fmt.Errorf("get tree for repo %s: %w", repo.Name, err)
 			}
-			results = append(results, skipRepo(repo.Name, err))
+			allResults = append(allResults, skipRepo(repo, err))
 			continue
 		}
 		repo.Files = files
 
 		protection, err := client.GetRulesets(ctx, owner, repo.Name, repo.DefaultBranch)
 		if err != nil {
-			if isRateLimitError(err) {
-				return nil, fmt.Errorf("get rulesets for repo %s: %w", repo.Name, err)
+			if IsRateLimitError(err) {
+				return ScanResult{}, fmt.Errorf("get rulesets for repo %s: %w", repo.Name, err)
 			}
-			results = append(results, skipRepo(repo.Name, err))
+			allResults = append(allResults, skipRepo(repo, err))
 			continue
 		}
 		if protection == nil {
 			protection, err = client.GetBranchProtection(ctx, owner, repo.Name, repo.DefaultBranch)
 			if err != nil {
-				if isRateLimitError(err) {
-					return nil, fmt.Errorf("get branch protection for repo %s: %w", repo.Name, err)
+				if IsRateLimitError(err) {
+					return ScanResult{}, fmt.Errorf("get branch protection for repo %s: %w", repo.Name, err)
 				}
-				results = append(results, skipRepo(repo.Name, err))
+				allResults = append(allResults, skipRepo(repo, err))
 				continue
 			}
 		}
 		repo.BranchProtection = protection
 
-		rr := RepoResult{RepoName: repo.Name}
+		rr := RepoResult{
+			RepoName:         repo.Name,
+			MostRecentCommit: repo.PushedAt,
+		}
 		for _, rule := range rules {
 			rr.Results = append(rr.Results, RuleResult{
 				RuleName: rule.Name(),
 				Passed:   rule.Check(repo),
 			})
 		}
-		results = append(results, rr)
+		allResults = append(allResults, rr)
 	}
 
-	sort.Slice(results, func(i, j int) bool {
-		return results[i].RepoName < results[j].RepoName
+	sort.Slice(allResults, func(i, j int) bool {
+		return allResults[i].RepoName < allResults[j].RepoName
 	})
 
-	return results, nil
+	for _, rr := range allResults {
+		if rr.Skipped() {
+			sr.Skipped = append(sr.Skipped, rr)
+		} else {
+			sr.Results = append(sr.Results, rr)
+		}
+	}
+
+	return sr, nil
 }

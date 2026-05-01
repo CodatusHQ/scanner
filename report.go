@@ -4,23 +4,31 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"time"
 )
 
-// GenerateReport produces a Markdown engineering-standards scorecard from scan results.
-func GenerateReport(org string, results []RepoResult) string {
-	return generateReport(org, results, time.Now())
-}
-
-func generateReport(org string, results []RepoResult, now time.Time) string {
+// GenerateReport produces a Markdown engineering-standards scorecard from a
+// ScanResult. The header emits totals and exclusion counts (forks, archived);
+// scanned-repo sections render the same Markdown the app posts to GitHub
+// Issues and the codatus.com sample fetches via marked.js.
+func GenerateReport(sr ScanResult) string {
 	var b strings.Builder
 
-	scanned, skipped := splitScanned(results)
+	scanned := sr.Results
+	skipped := sr.Skipped
 	compliant, nonCompliant := splitByCompliance(scanned)
 
 	b.WriteString("# Codatus - Engineering Standards Scorecard\n\n")
-	fmt.Fprintf(&b, "**Org:** %s\n", org)
-	fmt.Fprintf(&b, "**Scanned:** %s\n", now.UTC().Format("2006-01-02 15:04 UTC"))
+	fmt.Fprintf(&b, "**Org:** %s\n", sr.Org)
+	fmt.Fprintf(&b, "**Scanned:** %s\n", sr.ScannedAt.UTC().Format("2006-01-02 15:04 UTC"))
+	if sr.TotalRepos > 0 {
+		fmt.Fprintf(&b, "**Total repos:** %d\n", sr.TotalRepos)
+	}
+	if sr.ForksExcluded > 0 {
+		fmt.Fprintf(&b, "**Forks excluded:** %d\n", sr.ForksExcluded)
+	}
+	if sr.ArchivedExcluded > 0 {
+		fmt.Fprintf(&b, "**Archived excluded:** %d\n", sr.ArchivedExcluded)
+	}
 	fmt.Fprintf(&b, "**Repos scanned:** %d\n", len(scanned))
 	if len(scanned) > 0 {
 		fmt.Fprintf(&b, "**Compliant:** %d/%d (%d%%) *(a repo is compliant when it passes all rules below)*\n",
@@ -42,29 +50,18 @@ func generateReport(org string, results []RepoResult, now time.Time) string {
 	}
 
 	if len(compliant) > 0 {
-		writeCompliantSection(&b, org, compliant)
+		writeCompliantSection(&b, sr.Org, compliant)
 	}
 
 	if len(nonCompliant) > 0 {
-		writeNonCompliantSection(&b, org, nonCompliant)
+		writeNonCompliantSection(&b, sr.Org, nonCompliant)
 	}
 
 	if len(skipped) > 0 {
-		writeSkippedSection(&b, org, skipped)
+		writeSkippedSection(&b, sr.Org, skipped)
 	}
 
 	return b.String()
-}
-
-func splitScanned(results []RepoResult) (scanned, skipped []RepoResult) {
-	for _, rr := range results {
-		if rr.Skipped() {
-			skipped = append(skipped, rr)
-		} else {
-			scanned = append(scanned, rr)
-		}
-	}
-	return
 }
 
 func splitByCompliance(results []RepoResult) (compliant, nonCompliant []RepoResult) {
