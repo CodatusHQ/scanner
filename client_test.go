@@ -216,7 +216,7 @@ func TestListReposByInstallation_RateLimit(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected rate limit error, got nil")
 	}
-	if !isRateLimitError(err) {
+	if !IsRateLimitError(err) {
 		t.Errorf("expected rate limit error type, got: %v", err)
 	}
 }
@@ -581,7 +581,7 @@ func TestGetBranchProtection_RateLimit(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected rate limit error, got nil")
 	}
-	if !isRateLimitError(err) {
+	if !IsRateLimitError(err) {
 		t.Errorf("expected rate limit error type, got: %v", err)
 	}
 }
@@ -595,7 +595,7 @@ func TestGetRulesets_RateLimit(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected rate limit error, got nil")
 	}
-	if !isRateLimitError(err) {
+	if !IsRateLimitError(err) {
 		t.Errorf("expected rate limit error type, got: %v", err)
 	}
 }
@@ -609,7 +609,7 @@ func TestListReposByAccount_RateLimit(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected rate limit error, got nil")
 	}
-	if !isRateLimitError(err) {
+	if !IsRateLimitError(err) {
 		t.Errorf("expected rate limit error type, got: %v", err)
 	}
 }
@@ -623,7 +623,7 @@ func TestGetTree_RateLimit(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected rate limit error, got nil")
 	}
-	if !isRateLimitError(err) {
+	if !IsRateLimitError(err) {
 		t.Errorf("expected rate limit error type, got: %v", err)
 	}
 }

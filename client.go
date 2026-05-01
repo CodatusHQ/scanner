@@ -36,6 +36,7 @@ type Repo struct {
 	Description      string
 	DefaultBranch    string
 	Archived         bool
+	Fork             bool
 	PushedAt         time.Time         // most recent push to any branch (from list-repos)
 	Files            []FileEntry       // all files and directories in the repo
 	BranchProtection *BranchProtection // nil if no protection configured
@@ -75,10 +76,13 @@ func newGitHubClient(token, baseURL string) GitHubClient {
 	return &realGitHubClient{client: client}
 }
 
-// isRateLimitError checks whether an error is a GitHub rate limit error
+// IsRateLimitError reports whether an error is a GitHub rate limit error
 // (primary or secondary). Rate limit errors must never be swallowed -
 // they indicate a global problem that affects all subsequent API calls.
-func isRateLimitError(err error) bool {
+// Exported so callers (e.g., bulk-scan) can decide whether to abort a
+// multi-org run on the first rate-limited org rather than continue and
+// fail every subsequent call.
+func IsRateLimitError(err error) bool {
 	var rateLimitErr *github.RateLimitError
 	var abuseErr *github.AbuseRateLimitError
 	return errors.As(err, &rateLimitErr) || errors.As(err, &abuseErr)
@@ -104,7 +108,7 @@ func (c *realGitHubClient) listOrgRepos(ctx context.Context, org string) ([]Repo
 	for {
 		ghRepos, resp, err := c.client.Repositories.ListByOrg(ctx, org, opts)
 		if err != nil {
-			if isRateLimitError(err) {
+			if IsRateLimitError(err) {
 				return nil, err
 			}
 			return nil, fmt.Errorf("list repos for org %s: %w", org, err)
@@ -116,6 +120,7 @@ func (c *realGitHubClient) listOrgRepos(ctx context.Context, org string) ([]Repo
 				Description:   r.GetDescription(),
 				DefaultBranch: r.GetDefaultBranch(),
 				Archived:      r.GetArchived(),
+				Fork:          r.GetFork(),
 				PushedAt:      r.GetPushedAt().Time,
 			})
 		}
@@ -138,7 +143,7 @@ func (c *realGitHubClient) listUserRepos(ctx context.Context, user string) ([]Re
 	for {
 		ghRepos, resp, err := c.client.Repositories.ListByUser(ctx, user, opts)
 		if err != nil {
-			if isRateLimitError(err) {
+			if IsRateLimitError(err) {
 				return nil, err
 			}
 			return nil, fmt.Errorf("list repos for user %s: %w", user, err)
@@ -150,6 +155,7 @@ func (c *realGitHubClient) listUserRepos(ctx context.Context, user string) ([]Re
 				Description:   r.GetDescription(),
 				DefaultBranch: r.GetDefaultBranch(),
 				Archived:      r.GetArchived(),
+				Fork:          r.GetFork(),
 				PushedAt:      r.GetPushedAt().Time,
 			})
 		}
@@ -173,7 +179,7 @@ func (c *realGitHubClient) ListReposByInstallation(ctx context.Context) ([]Repo,
 	for {
 		result, resp, err := c.client.Apps.ListRepos(ctx, opts)
 		if err != nil {
-			if isRateLimitError(err) {
+			if IsRateLimitError(err) {
 				return nil, err
 			}
 			return nil, fmt.Errorf("list installation repos: %w", err)
@@ -185,6 +191,7 @@ func (c *realGitHubClient) ListReposByInstallation(ctx context.Context) ([]Repo,
 				Description:   r.GetDescription(),
 				DefaultBranch: r.GetDefaultBranch(),
 				Archived:      r.GetArchived(),
+				Fork:          r.GetFork(),
 				PushedAt:      r.GetPushedAt().Time,
 			})
 		}
@@ -201,7 +208,7 @@ func (c *realGitHubClient) ListReposByInstallation(ctx context.Context) ([]Repo,
 func (c *realGitHubClient) GetTree(ctx context.Context, owner, repo, branch string) ([]FileEntry, error) {
 	tree, resp, err := c.client.Git.GetTree(ctx, owner, repo, branch, true)
 	if err != nil {
-		if isRateLimitError(err) {
+		if IsRateLimitError(err) {
 			return nil, err
 		}
 		if resp != nil && resp.StatusCode == http.StatusConflict {
@@ -228,7 +235,7 @@ func (c *realGitHubClient) GetTree(ctx context.Context, owner, repo, branch stri
 func (c *realGitHubClient) GetBranchProtection(ctx context.Context, owner, repo, branch string) (*BranchProtection, error) {
 	prot, resp, err := c.client.Repositories.GetBranchProtection(ctx, owner, repo, branch)
 	if err != nil {
-		if isRateLimitError(err) {
+		if IsRateLimitError(err) {
 			return nil, err
 		}
 		if resp != nil && (resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusForbidden) {
@@ -250,7 +257,7 @@ func (c *realGitHubClient) GetBranchProtection(ctx context.Context, owner, repo,
 func (c *realGitHubClient) GetRulesets(ctx context.Context, owner, repo, branch string) (*BranchProtection, error) {
 	rules, resp, err := c.client.Repositories.GetRulesForBranch(ctx, owner, repo, branch, nil)
 	if err != nil {
-		if isRateLimitError(err) {
+		if IsRateLimitError(err) {
 			return nil, err
 		}
 		if resp != nil && (resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusForbidden) {

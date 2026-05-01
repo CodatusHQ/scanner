@@ -11,11 +11,11 @@ This repository is a Go library and a CLI. Posting the scorecard (e.g., as a Git
 ## How it works
 
 1. Codatus receives a GitHub account to scan (organization or user).
-2. It lists the non-archived repositories accessible to the token.
-3. For each repo, it runs 11 rule checks (see below).
-4. It produces a single Markdown scorecard summarizing pass/fail per repo per rule.
+2. It lists the repositories accessible to the token, then filters out **archived** and **forked** repos. Both exclusions are reported in the scorecard header so the reader can see the full breakdown (`Total repos`, `Forks excluded`, `Archived excluded`, `Repos scanned`).
+3. For each remaining repo, it runs 11 rule checks (see below).
+4. It produces a single Markdown scorecard summarizing pass/fail per repo per rule, plus a structured `ScanResult` value the caller can post-process (e.g. the bulk-scan binary serializes per-rule aggregates to JSON).
 
-The CLI prints the Markdown to stdout. Callers using the library get both the structured `[]RepoResult` and can generate the Markdown via `GenerateReport`.
+The CLI prints the Markdown to stdout. Callers using the library get a `ScanResult` (org name, scan timestamp, exclusion counts, per-repo results, skipped repos) and can generate the Markdown via `GenerateReport(scanResult)`.
 
 ---
 
@@ -119,9 +119,12 @@ The scorecard is a single Markdown document. Structure:
 
 **Org:** {org_name}
 **Scanned:** {timestamp}
+**Total repos:** {count}              <-- only if > 0
+**Forks excluded:** {count}           <-- only if > 0
+**Archived excluded:** {count}        <-- only if > 0
 **Repos scanned:** {count}
 **Compliant:** {n}/{total} ({percent}%) *(a repo is compliant when it passes all rules below)*
-**Skipped:** {count}              <-- only if any repos were skipped
+**Skipped:** {count}                  <-- only if any repos were skipped
 
 ## Summary
 
@@ -253,6 +256,43 @@ CODATUS_ORG=myorg CODATUS_TOKEN=ghp_... codatus > scorecard.md
 # User account
 CODATUS_ORG=my-username CODATUS_TOKEN=ghp_... codatus > scorecard.md
 ```
+
+### Bulk scan (many orgs at once)
+
+The `bulk-scan` binary reads a list of orgs/users from a file (one slug per line, blank lines skipped, no comment handling) and scans them sequentially. For each org it writes a `scorecard.md` and a `stats.json` into a per-org subfolder, so partial runs preserve completed work even if a later scan aborts.
+
+```sh
+# orgs.txt
+acme-corp
+wayne-enterprises
+stark-industries
+
+# Run
+bulk-scan --orgs orgs.txt --out ./scans --token ghp_...
+# or with the token in env:
+CODATUS_TOKEN=ghp_... bulk-scan --orgs orgs.txt --out ./scans
+```
+
+Output layout:
+
+```
+scans/
+├── acme-corp/
+│   ├── scorecard.md     # same Markdown the single-org CLI produces
+│   └── stats.json       # structured aggregates: per-rule pass rates, totals, exclusion counts
+├── wayne-enterprises/
+│   ├── scorecard.md
+│   └── stats.json
+└── ...
+```
+
+Progress prints to stderr per org (`[2/3] wayne-enterprises ... ok (42 scanned, 18/42 compliant = 42%)`); a final summary lists succeeded / failed / not-attempted counts.
+
+**Failure handling:**
+- Per-org errors (`404`, `403`, "user not found", etc.) - logged, run continues to the next org.
+- Global errors (`429` rate limit, `401` auth) - run aborts immediately. Files for orgs that already completed remain on disk; the un-scanned tail is reported in the summary as "not attempted."
+
+Exit code is non-zero if any org failed or was not attempted.
 
 ---
 

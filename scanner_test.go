@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"testing"
 	"time"
 
@@ -24,6 +25,18 @@ func newRateLimitError() *github.RateLimitError {
 	}
 }
 
+// allResults concatenates the scanned + skipped repos from a ScanResult,
+// sorted alphabetically by repo name. Convenient for tests that don't care
+// about the scanned/skipped distinction and just want to assert against a
+// flat ordered list.
+func allResults(sr ScanResult) []RepoResult {
+	out := make([]RepoResult, 0, len(sr.Results)+len(sr.Skipped))
+	out = append(out, sr.Results...)
+	out = append(out, sr.Skipped...)
+	sort.Slice(out, func(i, j int) bool { return out[i].RepoName < out[j].RepoName })
+	return out
+}
+
 func TestScan_SkipsArchivedRepos(t *testing.T) {
 	client := &MockGitHubClient{
 		Repos: []Repo{
@@ -32,16 +45,97 @@ func TestScan_SkipsArchivedRepos(t *testing.T) {
 		},
 	}
 
-	results, err := scanWithClient(context.Background(), client, PATAuth{Name: "test-org"})
+	sr, err := scanWithClient(context.Background(), client, PATAuth{Name: "test-org"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(results) != 1 {
-		t.Fatalf("expected 1 result, got %d", len(results))
+	if len(sr.Results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(sr.Results))
 	}
-	if results[0].RepoName != "active-repo" {
-		t.Errorf("expected active-repo, got %s", results[0].RepoName)
+	if sr.Results[0].RepoName != "active-repo" {
+		t.Errorf("expected active-repo, got %s", sr.Results[0].RepoName)
+	}
+	if sr.ArchivedExcluded != 1 {
+		t.Errorf("expected ArchivedExcluded=1, got %d", sr.ArchivedExcluded)
+	}
+	if sr.TotalRepos != 2 {
+		t.Errorf("expected TotalRepos=2, got %d", sr.TotalRepos)
+	}
+}
+
+func TestScan_SkipsForkedRepos(t *testing.T) {
+	client := &MockGitHubClient{
+		Repos: []Repo{
+			{Name: "own-repo", Description: "Ours", Fork: false},
+			{Name: "forked-repo", Description: "Fork", Fork: true},
+		},
+	}
+
+	sr, err := scanWithClient(context.Background(), client, PATAuth{Name: "test-org"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(sr.Results) != 1 {
+		t.Fatalf("expected 1 scanned, got %d", len(sr.Results))
+	}
+	if sr.Results[0].RepoName != "own-repo" {
+		t.Errorf("expected own-repo, got %s", sr.Results[0].RepoName)
+	}
+	if sr.ForksExcluded != 1 {
+		t.Errorf("expected ForksExcluded=1, got %d", sr.ForksExcluded)
+	}
+}
+
+func TestScan_PerRepoMostRecentCommit(t *testing.T) {
+	older := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	newer := time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)
+	client := &MockGitHubClient{
+		Repos: []Repo{
+			{Name: "stale", PushedAt: older},
+			{Name: "fresh", PushedAt: newer},
+		},
+	}
+
+	sr, err := scanWithClient(context.Background(), client, PATAuth{Name: "test-org"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Results sorted alphabetically: fresh, stale.
+	if len(sr.Results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(sr.Results))
+	}
+	if !sr.Results[0].MostRecentCommit.Equal(newer) {
+		t.Errorf("fresh: expected MostRecentCommit=%v, got %v", newer, sr.Results[0].MostRecentCommit)
+	}
+	if !sr.Results[1].MostRecentCommit.Equal(older) {
+		t.Errorf("stale: expected MostRecentCommit=%v, got %v", older, sr.Results[1].MostRecentCommit)
+	}
+}
+
+func TestScan_PerRepoMostRecentCommit_Skipped(t *testing.T) {
+	pushedAt := time.Date(2026, 4, 15, 0, 0, 0, 0, time.UTC)
+	client := &MockGitHubClient{
+		Repos: []Repo{
+			{Name: "empty-repo", DefaultBranch: "main", PushedAt: pushedAt},
+		},
+		TreeErrs: map[string]error{"empty-repo": ErrEmptyRepo},
+	}
+
+	sr, err := scanWithClient(context.Background(), client, PATAuth{Name: "test-org"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(sr.Skipped) != 1 {
+		t.Fatalf("expected 1 skipped, got %d", len(sr.Skipped))
+	}
+	// Skipped repos still carry their listing-time PushedAt forward so
+	// consumers aggregating org-level activity don't lose the signal.
+	if !sr.Skipped[0].MostRecentCommit.Equal(pushedAt) {
+		t.Errorf("expected skipped repo MostRecentCommit=%v, got %v", pushedAt, sr.Skipped[0].MostRecentCommit)
 	}
 }
 
@@ -54,15 +148,15 @@ func TestScan_ResultsSortedAlphabetically(t *testing.T) {
 		},
 	}
 
-	results, err := scanWithClient(context.Background(), client, PATAuth{Name: "test-org"})
+	sr, err := scanWithClient(context.Background(), client, PATAuth{Name: "test-org"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
 	expected := []string{"alpha", "middle", "zebra"}
 	for i, name := range expected {
-		if results[i].RepoName != name {
-			t.Errorf("position %d: expected %s, got %s", i, name, results[i].RepoName)
+		if sr.Results[i].RepoName != name {
+			t.Errorf("position %d: expected %s, got %s", i, name, sr.Results[i].RepoName)
 		}
 	}
 }
@@ -75,18 +169,18 @@ func TestScan_EvaluatesRulesPerRepo(t *testing.T) {
 		},
 	}
 
-	results, err := scanWithClient(context.Background(), client, PATAuth{Name: "test-org"})
+	sr, err := scanWithClient(context.Background(), client, PATAuth{Name: "test-org"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(results) != 2 {
-		t.Fatalf("expected 2 results, got %d", len(results))
+	if len(sr.Results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(sr.Results))
 	}
 
 	// Results are sorted alphabetically: no-desc first, then with-desc
-	noDesc := results[0]
-	withDesc := results[1]
+	noDesc := sr.Results[0]
+	withDesc := sr.Results[1]
 
 	if noDesc.RepoName != "no-desc" {
 		t.Fatalf("expected no-desc first, got %s", noDesc.RepoName)
@@ -114,6 +208,7 @@ func TestScan_PropagatesClientError(t *testing.T) {
 	}
 }
 
+
 func TestScan_UsesRulesetsWhenAvailable(t *testing.T) {
 	client := &MockGitHubClient{
 		Repos: []Repo{
@@ -127,13 +222,13 @@ func TestScan_UsesRulesetsWhenAvailable(t *testing.T) {
 		},
 	}
 
-	results, err := scanWithClient(context.Background(), client, PATAuth{Name: "test-org"})
+	sr, err := scanWithClient(context.Background(), client, PATAuth{Name: "test-org"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
 	// Should use rulesets (2 reviewers), not classic (1 reviewer)
-	for _, r := range results[0].Results {
+	for _, r := range sr.Results[0].Results {
 		if r.RuleName == "Has required reviewers" && !r.Passed {
 			t.Error("expected pass from rulesets")
 		}
@@ -151,12 +246,12 @@ func TestScan_FallsBackToClassicProtection(t *testing.T) {
 		},
 	}
 
-	results, err := scanWithClient(context.Background(), client, PATAuth{Name: "test-org"})
+	sr, err := scanWithClient(context.Background(), client, PATAuth{Name: "test-org"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	for _, r := range results[0].Results {
+	for _, r := range sr.Results[0].Results {
 		if r.RuleName == "Has branch protection" && !r.Passed {
 			t.Error("expected pass from classic branch protection fallback")
 		}
@@ -174,11 +269,12 @@ func TestScan_SkipsEmptyRepo(t *testing.T) {
 		},
 	}
 
-	results, err := scanWithClient(context.Background(), client, PATAuth{Name: "test-org"})
+	sr, err := scanWithClient(context.Background(), client, PATAuth{Name: "test-org"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
+	results := allResults(sr)
 	if len(results) != 2 {
 		t.Fatalf("expected 2 results, got %d", len(results))
 	}
@@ -205,11 +301,12 @@ func TestScan_SkipsTruncatedTree(t *testing.T) {
 		},
 	}
 
-	results, err := scanWithClient(context.Background(), client, PATAuth{Name: "test-org"})
+	sr, err := scanWithClient(context.Background(), client, PATAuth{Name: "test-org"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
+	results := allResults(sr)
 	if len(results) != 1 {
 		t.Fatalf("expected 1 result, got %d", len(results))
 	}
@@ -229,11 +326,12 @@ func TestScan_SkipsUnexpectedGetTreeError(t *testing.T) {
 		},
 	}
 
-	results, err := scanWithClient(context.Background(), client, PATAuth{Name: "test-org"})
+	sr, err := scanWithClient(context.Background(), client, PATAuth{Name: "test-org"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
+	results := allResults(sr)
 	if len(results) != 2 {
 		t.Fatalf("expected 2 results, got %d", len(results))
 	}
@@ -258,11 +356,12 @@ func TestScan_SkipsUnexpectedRulesetsError(t *testing.T) {
 		},
 	}
 
-	results, err := scanWithClient(context.Background(), client, PATAuth{Name: "test-org"})
+	sr, err := scanWithClient(context.Background(), client, PATAuth{Name: "test-org"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
+	results := allResults(sr)
 	if len(results) != 2 {
 		t.Fatalf("expected 2 results, got %d", len(results))
 	}
@@ -286,11 +385,12 @@ func TestScan_SkipsUnexpectedBranchProtectionError(t *testing.T) {
 		},
 	}
 
-	results, err := scanWithClient(context.Background(), client, PATAuth{Name: "test-org"})
+	sr, err := scanWithClient(context.Background(), client, PATAuth{Name: "test-org"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
+	results := allResults(sr)
 	if len(results) != 1 {
 		t.Fatalf("expected 1 result, got %d", len(results))
 	}
@@ -313,6 +413,7 @@ func TestScan_AbortsOnRateLimitDuringGetTree(t *testing.T) {
 	}
 }
 
+
 func TestScan_AbortsOnRateLimitDuringGetRulesets(t *testing.T) {
 	client := &MockGitHubClient{
 		Repos: []Repo{
@@ -327,6 +428,7 @@ func TestScan_AbortsOnRateLimitDuringGetRulesets(t *testing.T) {
 	}
 }
 
+
 func TestScan_AbortsOnRateLimitDuringGetBranchProtection(t *testing.T) {
 	client := &MockGitHubClient{
 		Repos: []Repo{
@@ -340,6 +442,7 @@ func TestScan_AbortsOnRateLimitDuringGetBranchProtection(t *testing.T) {
 		t.Fatal("expected error, got nil")
 	}
 }
+
 
 // Exercises the public Scan() entry point end-to-end against httptest to
 // verify that PATAuth hits /orgs/{name}/repos and InstallationAuth hits
