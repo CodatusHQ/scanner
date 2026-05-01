@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// GenerateReport produces a Markdown compliance report from scan results.
+// GenerateReport produces a Markdown engineering-standards scorecard from scan results.
 func GenerateReport(org string, results []RepoResult) string {
 	return generateReport(org, results, time.Now())
 }
@@ -18,7 +18,7 @@ func generateReport(org string, results []RepoResult, now time.Time) string {
 	scanned, skipped := splitScanned(results)
 	compliant, nonCompliant := splitByCompliance(scanned)
 
-	b.WriteString("# Codatus - Org Compliance Report\n\n")
+	b.WriteString("# Codatus - Engineering Standards Scorecard\n\n")
 	fmt.Fprintf(&b, "**Org:** %s\n", org)
 	fmt.Fprintf(&b, "**Scanned:** %s\n", now.UTC().Format("2006-01-02 15:04 UTC"))
 	fmt.Fprintf(&b, "**Repos scanned:** %d\n", len(scanned))

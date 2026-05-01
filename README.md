@@ -1,10 +1,10 @@
 # Codatus
 
-Codatus scans every repository in a GitHub organization or user account against a set of engineering standards and produces a Markdown compliance report.
+Codatus scans every repository in a GitHub organization or user account against a set of engineering standards and produces a Markdown scorecard.
 
-It answers one question: **does each repo in your account meet the baseline you care about?**
+It answers one question: **how does each repo in your org measure up against the standards you care about?**
 
-This repository is a Go library and a CLI. Posting the report (e.g., as a GitHub Issue) is the caller's responsibility - the scanner returns structured results and Markdown, nothing more.
+This repository is a Go library and a CLI. Posting the scorecard (e.g., as a GitHub Issue) is the caller's responsibility - the scanner returns structured results and Markdown, nothing more.
 
 ---
 
@@ -13,7 +13,7 @@ This repository is a Go library and a CLI. Posting the report (e.g., as a GitHub
 1. Codatus receives a GitHub account to scan (organization or user).
 2. It lists the non-archived repositories accessible to the token.
 3. For each repo, it runs 11 rule checks (see below).
-4. It produces a single Markdown report summarizing pass/fail per repo per rule.
+4. It produces a single Markdown scorecard summarizing pass/fail per repo per rule.
 
 The CLI prints the Markdown to stdout. Callers using the library get both the structured `[]RepoResult` and can generate the Markdown via `GenerateReport`.
 
@@ -110,12 +110,12 @@ Each rule produces a **pass** or **fail** result per repository. There are no sc
 
 ---
 
-## Report format
+## Scorecard format
 
-The report is a single Markdown document. Structure:
+The scorecard is a single Markdown document. Structure:
 
 ```
-# Codatus - Org Compliance Report
+# Codatus - Engineering Standards Scorecard
 
 **Org:** {org_name}
 **Scanned:** {timestamp}
@@ -173,7 +173,7 @@ The report is a single Markdown document. Structure:
 - [huge-repo](https://github.com/{org}/huge-repo) - file tree too large (truncated by GitHub API)
 ```
 
-The summary table is sorted by pass rate ascending (worst compliance first). The Rule reference section is collapsed by default and lists, in `AllRules` order, the "what it checks" / "how to fix" text for every rule that appears in the scan results - this carries into the GitHub issue when the report is posted, so the issue is self-contained. Sections are omitted when empty (e.g., no "Fully compliant" section if all repos have failures). Skipped repos are those that could not be scanned (empty repos, truncated file trees, API errors) - they are excluded from the compliance count.
+The summary table is sorted by pass rate ascending (worst compliance first). The Rule reference section is collapsed by default and lists, in `AllRules` order, the "what it checks" / "how to fix" text for every rule that appears in the scan results - this carries into the GitHub issue when the scorecard is posted, so the issue is self-contained. Sections are omitted when empty (e.g., no "Fully compliant" section if all repos have failures). Skipped repos are those that could not be scanned (empty repos, truncated file trees, API errors) - they are excluded from the compliance count.
 
 ---
 
@@ -236,22 +236,22 @@ How these values are sourced (env vars, CLI flags, config file) is the responsib
 
 ## CLI
 
-The `codatus` binary reads `CODATUS_ORG` and `CODATUS_TOKEN` from the environment, wraps them in `PATAuth`, runs a scan, and prints the Markdown report to stdout. Log output (scan summary, errors) goes to stderr so stdout stays clean for piping.
+The `codatus` binary reads `CODATUS_ORG` and `CODATUS_TOKEN` from the environment, wraps them in `PATAuth`, runs a scan, and prints the Markdown scorecard to stdout. Log output (scan summary, errors) goes to stderr so stdout stays clean for piping.
 
 Despite the name, `CODATUS_ORG` accepts either an organization slug or a user login - the library dispatches automatically.
 
 ```sh
 # Organization
-CODATUS_ORG=myorg CODATUS_TOKEN=ghp_... codatus > report.md
+CODATUS_ORG=myorg CODATUS_TOKEN=ghp_... codatus > scorecard.md
 
 # User account
-CODATUS_ORG=my-username CODATUS_TOKEN=ghp_... codatus > report.md
+CODATUS_ORG=my-username CODATUS_TOKEN=ghp_... codatus > scorecard.md
 ```
 
 ---
 
 ## What Codatus is not
 
-- **Not a velocity/DORA metrics tool.** It does not measure cycle time, deployment frequency, or review speed. That's a different product category.
-- **Not a security scanner.** It checks whether `SECURITY.md` exists and whether branch protection is on, but it does not scan code for vulnerabilities.
-- **Not a developer portal.** There is no service catalog, no scaffolding, no self-service actions. Just standards compliance.
+- **Not a velocity/DORA metrics tool.** It does not measure cycle time, deployment frequency, or review speed. That's a different product category (Swarmia, LinearB, CodePulse).
+- **Not a security scanner.** It checks whether `SECURITY.md` exists and whether branch protection is on, but it does not scan code for vulnerabilities (use Snyk, Dependabot, or OpenSSF Scorecard).
+- **Not a developer portal.** There is no service catalog, no scaffolding, no self-service actions (Backstage, Cortex, OpsLevel cover that). Just standards.
