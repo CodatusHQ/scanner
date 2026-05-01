@@ -173,10 +173,13 @@ func writeRuleReferenceSection(b *strings.Builder, results []RepoResult) {
 	}
 
 	b.WriteString("\n<details>\n<summary>Rule reference - what each rule checks and how to fix it</summary>\n\n")
-	for _, r := range entries {
-		fmt.Fprintf(b, "### %s\n", r.Name())
-		fmt.Fprintf(b, "**What it checks:** %s\n\n", r.Description())
-		fmt.Fprintf(b, "**How to fix:** %s\n\n", r.HowToFix())
+	for i, r := range entries {
+		fmt.Fprintf(b, "### %s\n\n", r.Name())
+		fmt.Fprintf(b, "- **What it checks:** %s\n", r.Description())
+		fmt.Fprintf(b, "- **How to fix:** %s\n\n", r.HowToFix())
+		if i < len(entries)-1 {
+			b.WriteString("---\n\n")
+		}
 	}
 	b.WriteString("</details>\n")
 }

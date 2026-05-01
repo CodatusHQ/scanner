@@ -135,14 +135,20 @@ The scorecard is a single Markdown document. Structure:
 <summary>Rule reference - what each rule checks and how to fix it</summary>
 
 ### Has repo description
-**What it checks:** ...
 
-**How to fix:** ...
+- **What it checks:** ...
+- **How to fix:** ...
+
+---
 
 ### Has substantial README
+
 ...
 
+---
+
 ### Has activity
+
 ...
 
 </details>
