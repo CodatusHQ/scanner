@@ -79,27 +79,47 @@ func TestHasActivity_DefaultsToTimeNow(t *testing.T) {
 	}
 }
 
-func TestHasSubstantialReadme_Pass(t *testing.T) {
-	rule := HasSubstantialReadme{}
+func TestHasReadme_Pass_README_md(t *testing.T) {
+	rule := HasReadme{}
 
-	if !rule.Check(Repo{Files: []FileEntry{{Path: "README.md", Size: 3000}}}) {
-		t.Error("expected pass for README.md over 2KB")
+	if !rule.Check(Repo{Files: []FileEntry{{Path: "README.md"}}}) {
+		t.Error("expected pass when README.md exists")
 	}
 }
 
-func TestHasSubstantialReadme_Fail_TooSmall(t *testing.T) {
-	rule := HasSubstantialReadme{}
+func TestHasReadme_Pass_README_NoExtension(t *testing.T) {
+	rule := HasReadme{}
 
-	if rule.Check(Repo{Files: []FileEntry{{Path: "README.md", Size: 2048}}}) {
-		t.Error("expected fail for README.md exactly 2048 bytes")
+	if !rule.Check(Repo{Files: []FileEntry{{Path: "README"}}}) {
+		t.Error("expected pass when README (no extension) exists")
 	}
 }
 
-func TestHasSubstantialReadme_Fail_Missing(t *testing.T) {
-	rule := HasSubstantialReadme{}
+func TestHasReadme_PassRegardlessOfSize(t *testing.T) {
+	rule := HasReadme{}
+
+	// The previous "substantial" variant required >2 KB. The replacement
+	// drops the size threshold entirely - tiny READMEs still pass.
+	if !rule.Check(Repo{Files: []FileEntry{{Path: "README.md", Size: 10}}}) {
+		t.Error("expected pass for tiny README.md (size threshold dropped)")
+	}
+}
+
+func TestHasReadme_Fail_Missing(t *testing.T) {
+	rule := HasReadme{}
 
 	if rule.Check(Repo{Files: []FileEntry{{Path: "main.go"}}}) {
-		t.Error("expected fail when README.md is missing")
+		t.Error("expected fail when no README is present")
+	}
+}
+
+func TestHasReadme_Fail_LowercaseNotAccepted(t *testing.T) {
+	rule := HasReadme{}
+
+	// Case-sensitive check - lowercase variants do not pass. If this becomes
+	// a problem in real scans, widening is a separate change.
+	if rule.Check(Repo{Files: []FileEntry{{Path: "readme.md"}}}) {
+		t.Error("expected fail for lowercase readme.md (case-sensitive check)")
 	}
 }
 
@@ -180,32 +200,6 @@ func TestHasCIWorkflow_Fail_WrongExtension(t *testing.T) {
 
 	if rule.Check(Repo{Files: []FileEntry{{Path: ".github/workflows/README.md"}}}) {
 		t.Error("expected fail for non-yaml file in workflows")
-	}
-}
-
-func TestHasTestDirectory_Pass(t *testing.T) {
-	for _, dir := range []string{"test", "tests", "__tests__", "spec", "specs"} {
-		rule := HasTestDirectory{}
-
-		if !rule.Check(Repo{Files: []FileEntry{{Path: dir, Type: "tree"}}}) {
-			t.Errorf("expected pass for directory %q", dir)
-		}
-	}
-}
-
-func TestHasTestDirectory_Fail(t *testing.T) {
-	rule := HasTestDirectory{}
-
-	if rule.Check(Repo{Files: []FileEntry{{Path: "src", Type: "tree"}}}) {
-		t.Error("expected fail when no test directory exists")
-	}
-}
-
-func TestHasTestDirectory_Fail_FileNotDir(t *testing.T) {
-	rule := HasTestDirectory{}
-
-	if rule.Check(Repo{Files: []FileEntry{{Path: "test", Type: "blob"}}}) {
-		t.Error("expected fail when 'test' is a file, not a directory")
 	}
 }
 
@@ -314,6 +308,96 @@ func TestAllRules_DescriptionAndHowToFix_NonEmpty(t *testing.T) {
 		}
 		if r.HowToFix() == "" {
 			t.Errorf("rule %q returned empty HowToFix", r.Name())
+		}
+	}
+}
+
+func TestAllRules_CategorySetCorrectly(t *testing.T) {
+	wantScored := map[string]bool{
+		"Has branch protection":                  true,
+		"Has required reviewers":                 true,
+		"Requires status checks before merging":  true,
+		"Has CODEOWNERS":                         true,
+		"Has CI workflow":                        true,
+	}
+	wantAdditional := map[string]bool{
+		"Has README":           true,
+		"Has LICENSE":          true,
+		"Has repo description": true,
+		"Has activity":         true,
+		"Has SECURITY.md":      true,
+	}
+
+	for _, r := range AllRules() {
+		switch r.Category() {
+		case CategoryScored:
+			if !wantScored[r.Name()] {
+				t.Errorf("rule %q is CategoryScored but not in expected scored set", r.Name())
+			}
+		case CategoryAdditional:
+			if !wantAdditional[r.Name()] {
+				t.Errorf("rule %q is CategoryAdditional but not in expected additional set", r.Name())
+			}
+		default:
+			t.Errorf("rule %q has unknown category %q", r.Name(), r.Category())
+		}
+	}
+
+	// Every rule in the expected sets must actually be in AllRules.
+	gotNames := make(map[string]bool)
+	for _, r := range AllRules() {
+		gotNames[r.Name()] = true
+	}
+	for name := range wantScored {
+		if !gotNames[name] {
+			t.Errorf("expected scored rule %q missing from AllRules", name)
+		}
+	}
+	for name := range wantAdditional {
+		if !gotNames[name] {
+			t.Errorf("expected additional rule %q missing from AllRules", name)
+		}
+	}
+}
+
+func TestAllRules_ImportanceOrder(t *testing.T) {
+	got := AllRules()
+	want := []string{
+		// Scored, in importance order:
+		"Has branch protection",
+		"Has required reviewers",
+		"Requires status checks before merging",
+		"Has CODEOWNERS",
+		"Has CI workflow",
+		// Additional, in importance order:
+		"Has README",
+		"Has LICENSE",
+		"Has repo description",
+		"Has activity",
+		"Has SECURITY.md",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("expected %d rules, got %d", len(want), len(got))
+	}
+	for i, name := range want {
+		if got[i].Name() != name {
+			t.Errorf("position %d: expected %q, got %q", i, name, got[i].Name())
+		}
+	}
+}
+
+func TestScoredRules_OnlyScored(t *testing.T) {
+	for _, r := range ScoredRules() {
+		if r.Category() != CategoryScored {
+			t.Errorf("ScoredRules returned %q which has category %q", r.Name(), r.Category())
+		}
+	}
+}
+
+func TestAdditionalRules_OnlyAdditional(t *testing.T) {
+	for _, r := range AdditionalRules() {
+		if r.Category() != CategoryAdditional {
+			t.Errorf("AdditionalRules returned %q which has category %q", r.Name(), r.Category())
 		}
 	}
 }

@@ -67,6 +67,87 @@ type ScanResult struct {
 	Results          []RepoResult // repos that finished scanning (success or fail per-rule)
 }
 
+// Score computes the org-level score: the arithmetic mean of pass rates
+// across the scored rules in sr.Results. Returns the score (0-100) and a
+// flag indicating whether it's defined. When sr has no scanned repos,
+// defined=false and the caller should render "N/A". Result is rounded
+// to the nearest integer for display.
+func Score(sr ScanResult) (score int, defined bool) {
+	if len(sr.Results) == 0 {
+		return 0, false
+	}
+	scored := ScoredRules()
+	if len(scored) == 0 {
+		return 0, false
+	}
+	totalPassRate := 0
+	for _, rule := range scored {
+		passing := 0
+		for _, rr := range sr.Results {
+			for _, res := range rr.Results {
+				if res.RuleName == rule.Name() && res.Passed {
+					passing++
+					break
+				}
+			}
+		}
+		totalPassRate += passing * 100 / len(sr.Results)
+	}
+	return totalPassRate / len(scored), true
+}
+
+// Bucket classifies a repo by what fraction of the scored rules it passes.
+// Each bucket covers an integer percentage range; the full bucket set
+// returned by Buckets() covers [0, 100] without gaps or overlaps. Display
+// labels are derived from MinPct/MaxPct at render time (see report.go).
+type Bucket struct {
+	Name   string // "Strong", "Moderate", "Weak"
+	MinPct int    // inclusive lower bound (0..100)
+	MaxPct int    // inclusive upper bound (0..100)
+}
+
+// Buckets returns the score-range buckets in display order (highest range
+// first). Adding/removing buckets, renaming them, or shifting thresholds
+// is a one-place edit here - report and stats output both derive from this
+// list and need no separate updates.
+func Buckets() []Bucket {
+	return []Bucket{
+		{Name: "Strong", MinPct: 80, MaxPct: 100},
+		{Name: "Moderate", MinPct: 40, MaxPct: 79},
+		{Name: "Weak", MinPct: 0, MaxPct: 39},
+	}
+}
+
+// BucketOf classifies a single repo by the percentage of scored rules it
+// passes. Returns the matching Bucket plus the underlying counts so callers
+// don't re-derive them. If there are zero scored rules the result is the
+// last-defined bucket (i.e. Weak) with zero counts; this only happens in
+// test fixtures with no scored rules registered.
+func BucketOf(rr RepoResult) (b Bucket, scoredPassing, scoredTotal, scorePct int) {
+	scored := ScoredRules()
+	scoredTotal = len(scored)
+	scoredNames := make(map[string]bool, scoredTotal)
+	for _, r := range scored {
+		scoredNames[r.Name()] = true
+	}
+	for _, res := range rr.Results {
+		if scoredNames[res.RuleName] && res.Passed {
+			scoredPassing++
+		}
+	}
+	defs := Buckets()
+	if scoredTotal == 0 {
+		return defs[len(defs)-1], 0, 0, 0
+	}
+	scorePct = scoredPassing * 100 / scoredTotal
+	for _, def := range defs {
+		if scorePct >= def.MinPct && scorePct <= def.MaxPct {
+			return def, scoredPassing, scoredTotal, scorePct
+		}
+	}
+	return defs[len(defs)-1], scoredPassing, scoredTotal, scorePct
+}
+
 // scanOptions holds optional parameters configurable via functional options.
 type scanOptions struct {
 	baseURL string
