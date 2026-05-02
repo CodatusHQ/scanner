@@ -131,13 +131,9 @@ The scorecard is a single Markdown document. Structure:
 ```
 # Codatus - Engineering Standards Scorecard
 
-**Org:** {org_name}
-**Scanned:** {timestamp}
-**Total repos:** {count}              <-- only if > 0
-**Forks excluded:** {count}           <-- only if > 0
-**Archived excluded:** {count}        <-- only if > 0
-**Repos scanned:** {count}
-**Skipped:** {count}                  <-- only if any repos were skipped
+**Org:** {org_name}<br>
+**Scanned:** {timestamp}<br>
+**Repos:** {scanned} of {total} scanned ({forks} forks excluded, {archived} archived excluded, {skipped} skipped)
 
 ## Scored rules
 
@@ -153,7 +149,7 @@ The scorecard is a single Markdown document. Structure:
 
 ## Additional checks
 
-| Check | Passing | Failing | Coverage |
+| Rule | Passing | Failing | Pass rate |
 |------|---------|---------|----------|
 | Has README | 50 | 3 | 94% |
 | Has LICENSE | 38 | 15 | 71% |
@@ -166,14 +162,14 @@ The scorecard is a single Markdown document. Structure:
 ### Strong (≥80%)
 
 <details>
-<summary><a href="https://github.com/{org}/repo-a">repo-a</a> - 100% (5/5 scored rules passing)</summary>
+<summary><a href="https://github.com/{org}/repo-a">repo-a</a> - 100%</summary>
 
 </details>
 
 ### Moderate (40-79%)
 
 <details>
-<summary><a href="https://github.com/{org}/repo-b">repo-b</a> - 60% (3/5 scored rules passing)</summary>
+<summary><a href="https://github.com/{org}/repo-b">repo-b</a> - 60%</summary>
 
 **Failing scored rules:**
 - Has CODEOWNERS
@@ -187,7 +183,7 @@ The scorecard is a single Markdown document. Structure:
 ### Weak (≤39%)
 
 <details>
-<summary><a href="https://github.com/{org}/repo-c">repo-c</a> - 0% (0/5 scored rules passing)</summary>
+<summary><a href="https://github.com/{org}/repo-c">repo-c</a> - 0%</summary>
 
 **Failing scored rules:**
 - Has branch protection
@@ -197,6 +193,11 @@ The scorecard is a single Markdown document. Structure:
 - Has CI workflow
 
 </details>
+
+### Skipped ({n} repos)             <-- only if any repos were skipped
+
+- [empty-repo](https://github.com/{org}/empty-repo) - repository is empty
+- [huge-repo](https://github.com/{org}/huge-repo) - file tree too large (truncated by GitHub API)
 
 ## Rule reference
 
@@ -220,14 +221,11 @@ The scorecard is a single Markdown document. Structure:
 ...
 
 </details>
-
-## ⚠️ Skipped ({n} repos)          <-- only if any repos were skipped
-
-- [empty-repo](https://github.com/{org}/empty-repo) - repository is empty
-- [huge-repo](https://github.com/{org}/huge-repo) - file tree too large (truncated by GitHub API)
 ```
 
-Tables render in fixed importance order (not sorted by pass rate). The Rule reference section is collapsed by default and lists, for every rule actually present in the scan results, the "what it checks" / "how to fix" text - split into Scored rules and Additional checks subsections. Sections (and entire buckets) are omitted when empty. Skipped repos are those that could not be scanned (empty repos, truncated file trees, API errors) - they are excluded from the score and bucket counts, and appear at the very end.
+Header line breaks use explicit `<br>` so spec-compliant Markdown renderers (CommonMark/marked.js/kramdown/GitHub) emit one line per item instead of folding consecutive single-newlines into one paragraph. The repo-stats parenthetical drops fields that are zero - with no exclusions and no skipped repos, it collapses to `**Repos:** {scanned} of {total} scanned`.
+
+Tables render in fixed importance order (not sorted by pass rate). Both tables share the same column layout. The Rule reference section is collapsed by default and lists, for every rule actually present in the scan results, the "what it checks" / "how to fix" text - split into Scored rules and Additional checks subsections. Subsections (and entire buckets) are omitted when empty. Skipped repos are those that could not be scanned (empty repos, truncated file trees, API errors); they are excluded from the score and bucket counts, and render as the last subsection inside Repository details.
 
 When `repos_scanned` is 0, the Score line reads `**Score: N/A** (no repos available to score)`.
 

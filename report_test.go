@@ -37,10 +37,9 @@ func TestGenerateReport_StrongAndWeakBuckets(t *testing.T) {
 
 	want := `# Codatus - Engineering Standards Scorecard
 
-**Org:** test-org
-**Scanned:** 2026-04-05 12:00 UTC
-**Total repos:** 2
-**Repos scanned:** 2
+**Org:** test-org<br>
+**Scanned:** 2026-04-05 12:00 UTC<br>
+**Repos:** 2 of 2 scanned
 
 ## Scored rules
 
@@ -56,7 +55,7 @@ func TestGenerateReport_StrongAndWeakBuckets(t *testing.T) {
 
 ## Additional checks
 
-| Check | Passing | Failing | Coverage |
+| Rule | Passing | Failing | Pass rate |
 |------|---------|---------|----------|
 | Has README | 0 | 0 | 0% |
 | Has LICENSE | 0 | 0 | 0% |
@@ -69,14 +68,14 @@ func TestGenerateReport_StrongAndWeakBuckets(t *testing.T) {
 ### Strong (≥80%)
 
 <details>
-<summary><a href="https://github.com/test-org/alpha">alpha</a> - 100% (5/5 scored rules passing)</summary>
+<summary><a href="https://github.com/test-org/alpha">alpha</a> - 100%</summary>
 
 </details>
 
 ### Weak (≤39%)
 
 <details>
-<summary><a href="https://github.com/test-org/beta">beta</a> - 0% (0/5 scored rules passing)</summary>
+<summary><a href="https://github.com/test-org/beta">beta</a> - 0%</summary>
 
 **Failing scored rules:**
 - Has branch protection
@@ -140,9 +139,9 @@ func TestGenerateReport_EmptyResults(t *testing.T) {
 
 	want := `# Codatus - Engineering Standards Scorecard
 
-**Org:** empty-org
-**Scanned:** 2026-04-05 12:00 UTC
-**Repos scanned:** 0
+**Org:** empty-org<br>
+**Scanned:** 2026-04-05 12:00 UTC<br>
+**Repos:** 0 scanned
 
 No repos found.
 `
@@ -193,7 +192,9 @@ func TestGenerateReport_BucketSectionOmittedWhenEmpty(t *testing.T) {
 	}
 }
 
-func TestGenerateReport_AdditionalChecksColumnHeaderIsCoverage(t *testing.T) {
+func TestGenerateReport_BothTablesShareColumnLayout(t *testing.T) {
+	// Scored rules and Additional checks should render with identical
+	// column headers so the two tables visually align.
 	sr := ScanResult{
 		Org:        "test-org",
 		ScannedAt:  testTime,
@@ -202,12 +203,14 @@ func TestGenerateReport_AdditionalChecksColumnHeaderIsCoverage(t *testing.T) {
 	}
 	got := GenerateReport(sr)
 
-	if !strings.Contains(got, "| Check | Passing | Failing | Coverage |") {
-		t.Errorf("expected additional checks table to use 'Coverage' column header; got:\n%s", got)
+	if strings.Count(got, "| Rule | Passing | Failing | Pass rate |") != 2 {
+		t.Errorf("expected both tables to use 'Rule | Passing | Failing | Pass rate'; got:\n%s", got)
 	}
-	// Scored rules table keeps "Pass rate".
-	if !strings.Contains(got, "| Rule | Passing | Failing | Pass rate |") {
-		t.Errorf("expected scored rules table to keep 'Pass rate' column header; got:\n%s", got)
+	if strings.Contains(got, "| Check |") {
+		t.Errorf("did not expect legacy 'Check' column header anywhere; got:\n%s", got)
+	}
+	if strings.Contains(got, "Coverage |") {
+		t.Errorf("did not expect legacy 'Coverage' column header anywhere; got:\n%s", got)
 	}
 }
 
@@ -339,14 +342,27 @@ func TestGenerateReport_WithSkippedRepos(t *testing.T) {
 	}
 	got := GenerateReport(sr)
 
-	if !strings.Contains(got, "**Skipped:** 2") {
-		t.Errorf("expected '**Skipped:** 2' header line; got:\n%s", got)
+	// Skipped count surfaces in the one-line repo-stats header line.
+	if !strings.Contains(got, "2 skipped") {
+		t.Errorf("expected '2 skipped' in repo-stats header; got:\n%s", got)
 	}
-	if !strings.Contains(got, "## ⚠️ Skipped (2 repos)") {
-		t.Errorf("expected skipped section heading; got:\n%s", got)
+	// Skipped renders as a sibling subsection under ## Repository details
+	// (no longer a top-level section, no warning emoji).
+	if !strings.Contains(got, "### Skipped (2 repos)") {
+		t.Errorf("expected '### Skipped (2 repos)' subsection heading; got:\n%s", got)
+	}
+	if strings.Contains(got, "## ⚠️ Skipped") || strings.Contains(got, "⚠️") {
+		t.Errorf("did not expect legacy '## ⚠️ Skipped' section anywhere; got:\n%s", got)
 	}
 	if !strings.Contains(got, "[empty-repo](https://github.com/test-org/empty-repo) - repository is empty") {
 		t.Errorf("expected empty-repo entry; got:\n%s", got)
+	}
+
+	// Skipped subsection appears after Strong (the only bucket present here).
+	strongIdx := strings.Index(got, "### Strong")
+	skippedIdx := strings.Index(got, "### Skipped")
+	if strongIdx == -1 || skippedIdx == -1 || strongIdx >= skippedIdx {
+		t.Errorf("expected ### Skipped to appear after ### Strong; got:\n%s", got)
 	}
 }
 
@@ -365,7 +381,7 @@ func TestGenerateReport_WithUnexpectedSkipError(t *testing.T) {
 	}
 }
 
-func TestGenerateReport_HeaderEmitsExclusionLinesWhenNonzero(t *testing.T) {
+func TestGenerateReport_HeaderRepoStatsLineWithExclusions(t *testing.T) {
 	sr := ScanResult{
 		Org:              "test-org",
 		ScannedAt:        testTime,
@@ -373,22 +389,29 @@ func TestGenerateReport_HeaderEmitsExclusionLinesWhenNonzero(t *testing.T) {
 		ForksExcluded:    3,
 		ArchivedExcluded: 1,
 		Results:          []RepoResult{{RepoName: "a", Results: allScored(5)}},
+		Skipped:          []RepoResult{{RepoName: "empty", KnownSkipReason: "repository is empty"}},
 	}
 	got := GenerateReport(sr)
 
-	totalIdx := strings.Index(got, "**Total repos:** 14")
-	forksIdx := strings.Index(got, "**Forks excluded:** 3")
-	archivedIdx := strings.Index(got, "**Archived excluded:** 1")
-	scannedIdx := strings.Index(got, "**Repos scanned:** 1")
-	if totalIdx == -1 || forksIdx == -1 || archivedIdx == -1 || scannedIdx == -1 {
-		t.Fatalf("expected all four header lines; got:\n%s", got)
+	want := "**Repos:** 1 of 14 scanned (3 forks excluded, 1 archived excluded, 1 skipped)"
+	if !strings.Contains(got, want) {
+		t.Errorf("expected one-line repo-stats header %q; got:\n%s", want, got)
 	}
-	if !(totalIdx < forksIdx && forksIdx < archivedIdx && archivedIdx < scannedIdx) {
-		t.Errorf("expected order Total → Forks → Archived → Scanned; got:\n%s", got)
+	// The legacy line-per-field format must not leak through.
+	for _, legacy := range []string{
+		"**Total repos:**",
+		"**Forks excluded:**",
+		"**Archived excluded:**",
+		"**Repos scanned:**",
+		"**Skipped:** ",
+	} {
+		if strings.Contains(got, legacy) {
+			t.Errorf("did not expect legacy header line %q; got:\n%s", legacy, got)
+		}
 	}
 }
 
-func TestGenerateReport_HeaderOmitsExclusionLinesWhenZero(t *testing.T) {
+func TestGenerateReport_HeaderRepoStatsLineWithoutExclusions(t *testing.T) {
 	sr := ScanResult{
 		Org:        "test-org",
 		ScannedAt:  testTime,
@@ -397,10 +420,30 @@ func TestGenerateReport_HeaderOmitsExclusionLinesWhenZero(t *testing.T) {
 	}
 	got := GenerateReport(sr)
 
-	if strings.Contains(got, "**Forks excluded:**") {
-		t.Errorf("expected no Forks excluded line when zero; got:\n%s", got)
+	// No forks, no archived, no skipped → parenthetical is omitted entirely.
+	if !strings.Contains(got, "**Repos:** 1 of 1 scanned\n") {
+		t.Errorf("expected '**Repos:** 1 of 1 scanned' (no parenthetical); got:\n%s", got)
 	}
-	if strings.Contains(got, "**Archived excluded:**") {
-		t.Errorf("expected no Archived excluded line when zero; got:\n%s", got)
+	if strings.Contains(got, "scanned (") {
+		t.Errorf("expected no parenthetical breakdown when nothing was excluded or skipped; got:\n%s", got)
+	}
+}
+
+func TestGenerateReport_HeaderUsesBrLineBreaks(t *testing.T) {
+	// CommonMark folds single newlines into one paragraph; explicit <br>
+	// keeps each header line on its own line in any spec-compliant renderer.
+	sr := ScanResult{
+		Org:        "test-org",
+		ScannedAt:  testTime,
+		TotalRepos: 1,
+		Results:    []RepoResult{{RepoName: "a", Results: allScored(5)}},
+	}
+	got := GenerateReport(sr)
+
+	if !strings.Contains(got, "**Org:** test-org<br>\n") {
+		t.Errorf("expected **Org:** line to end with <br>; got:\n%s", got)
+	}
+	if !strings.Contains(got, "**Scanned:** 2026-04-05 12:00 UTC<br>\n") {
+		t.Errorf("expected **Scanned:** line to end with <br>; got:\n%s", got)
 	}
 }
