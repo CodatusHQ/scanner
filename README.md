@@ -231,6 +231,24 @@ Tables render in fixed importance order (not sorted by pass rate). The Rule refe
 
 When `repos_scanned` is 0, the Score line reads `**Score: N/A** (no repos available to score)`.
 
+### Canonical sample fixture
+
+`samples.Fixture()` returns a deterministic `ScanResult` for the fictional `acme-corp` org. It's the single source of truth for the sample scorecard shown on the landing page and used as dev-seed data in the app, replacing what used to be hand-typed Markdown in each downstream repo.
+
+Go consumers render it in process:
+
+```go
+md := scanner.GenerateReport(samples.Fixture())
+```
+
+Non-Go consumers use the generator binary, which writes Markdown to stdout (or to `--out`):
+
+```
+go run github.com/CodatusHQ/scanner/cmd/generate-sample > sample-scorecard.md
+```
+
+No rendered `.md` is committed here - downstream copies are refreshed on demand by re-running the generator.
+
 ---
 
 ## Scanner configuration
