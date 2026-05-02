@@ -24,8 +24,8 @@ func TestFixtureRenders(t *testing.T) {
 		"### Strong",
 		"### Moderate",
 		"### Weak",
+		"### Skipped",
 		"## Rule reference",
-		"## ⚠️ Skipped",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("rendered scorecard missing %q", want)

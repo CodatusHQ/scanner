@@ -10,13 +10,12 @@ import (
 // ScanResult. The structure is fixed and meaningful for prospects landing
 // from a cold-email link:
 //
-//   1. Header with totals and exclusion counts
+//   1. Header: title, org, scan time, single-line repo stats
 //   2. ## Scored rules table (importance order, drives the score)
 //   3. **Score: N/100** inline callout (or **Score: N/A** when no repos)
-//   4. ## Additional checks table (importance order, "Coverage" column)
-//   5. ## Repository details with three score-based buckets
+//   4. ## Additional checks table (importance order, same columns as scored)
+//   5. ## Repository details: ### Strong / Moderate / Weak / Skipped subsections
 //   6. ## Rule reference (collapsed <details>, split by category)
-//   7. ## ⚠️ Skipped (only if any repos couldn't be scanned)
 func GenerateReport(sr ScanResult) string {
 	var b strings.Builder
 
@@ -34,16 +33,16 @@ func GenerateReport(sr ScanResult) string {
 		writeScoredRulesSection(&b, scanned)
 		writeScoreCallout(&b, sr)
 		writeAdditionalChecksSection(&b, scanned)
-		writeRepoDetailsSection(&b, sr.Org, scanned)
-		writeRuleReferenceSection(&b, scanned)
 	} else {
 		// No scanned repos but some were skipped: emit the score callout
 		// in its N/A form so the structure is consistent.
 		writeScoreCallout(&b, sr)
 	}
 
-	if len(skipped) > 0 {
-		writeSkippedSection(&b, sr.Org, skipped)
+	writeRepoDetailsSection(&b, sr.Org, scanned, skipped)
+
+	if len(scanned) > 0 {
+		writeRuleReferenceSection(&b, scanned)
 	}
 
 	return b.String()
@@ -51,21 +50,41 @@ func GenerateReport(sr ScanResult) string {
 
 func writeHeader(b *strings.Builder, sr ScanResult) {
 	b.WriteString("# Codatus - Engineering Standards Scorecard\n\n")
-	fmt.Fprintf(b, "**Org:** %s\n", sr.Org)
-	fmt.Fprintf(b, "**Scanned:** %s\n", sr.ScannedAt.UTC().Format("2006-01-02 15:04 UTC"))
+	// Each header line ends with `<br>` so spec-compliant Markdown
+	// renderers (marked.js, kramdown, GitHub) emit one line per item
+	// instead of folding consecutive single-newlines into one paragraph.
+	// CommonMark's Raw HTML rule allows inline phrasing tags like br.
+	fmt.Fprintf(b, "**Org:** %s<br>\n", sr.Org)
+	fmt.Fprintf(b, "**Scanned:** %s<br>\n", sr.ScannedAt.UTC().Format("2006-01-02 15:04 UTC"))
+	fmt.Fprintf(b, "**Repos:** %s\n", repoStatsLine(sr))
+}
+
+// repoStatsLine collapses scanned/total/forks/archived/skipped into one
+// readable line: `10 of 15 scanned (3 forks excluded, 1 archived excluded,
+// 1 skipped)`. Zero-valued breakdown fields drop out of the parenthetical;
+// when nothing was excluded or skipped, the parenthetical is omitted
+// entirely. Falls back to plain `N scanned` when TotalRepos is unknown.
+func repoStatsLine(sr ScanResult) string {
+	scanned := len(sr.Results)
+	headline := fmt.Sprintf("%d scanned", scanned)
 	if sr.TotalRepos > 0 {
-		fmt.Fprintf(b, "**Total repos:** %d\n", sr.TotalRepos)
+		headline = fmt.Sprintf("%d of %d scanned", scanned, sr.TotalRepos)
 	}
+
+	var parts []string
 	if sr.ForksExcluded > 0 {
-		fmt.Fprintf(b, "**Forks excluded:** %d\n", sr.ForksExcluded)
+		parts = append(parts, fmt.Sprintf("%d forks excluded", sr.ForksExcluded))
 	}
 	if sr.ArchivedExcluded > 0 {
-		fmt.Fprintf(b, "**Archived excluded:** %d\n", sr.ArchivedExcluded)
+		parts = append(parts, fmt.Sprintf("%d archived excluded", sr.ArchivedExcluded))
 	}
-	fmt.Fprintf(b, "**Repos scanned:** %d\n", len(sr.Results))
 	if len(sr.Skipped) > 0 {
-		fmt.Fprintf(b, "**Skipped:** %d\n", len(sr.Skipped))
+		parts = append(parts, fmt.Sprintf("%d skipped", len(sr.Skipped)))
 	}
+	if len(parts) == 0 {
+		return headline
+	}
+	return fmt.Sprintf("%s (%s)", headline, strings.Join(parts, ", "))
 }
 
 type ruleAggregate struct {
@@ -112,8 +131,11 @@ func writeScoredRulesSection(b *strings.Builder, scanned []RepoResult) {
 }
 
 func writeAdditionalChecksSection(b *strings.Builder, scanned []RepoResult) {
+	// Same column layout as Scored rules so the two tables visually
+	// align in any renderer that auto-sizes by header text. The section
+	// heading already conveys "informational only".
 	b.WriteString("\n## Additional checks\n\n")
-	b.WriteString("| Check | Passing | Failing | Coverage |\n")
+	b.WriteString("| Rule | Passing | Failing | Pass rate |\n")
 	b.WriteString("|------|---------|---------|----------|\n")
 	for _, agg := range aggregate(scanned, AdditionalRules()) {
 		fmt.Fprintf(b, "| %s | %d | %d | %d%% |\n", agg.rule.Name(), agg.passing, agg.failing, agg.passRate)
@@ -186,7 +208,12 @@ func writeRuleReferenceEntries(b *strings.Builder, rules []Rule) {
 	}
 }
 
-func writeRepoDetailsSection(b *strings.Builder, org string, scanned []RepoResult) {
+// writeRepoDetailsSection renders a single ## Repository details
+// section that groups every repo - successfully scanned and skipped -
+// into ### subsections: Strong / Moderate / Weak by score, then Skipped
+// for repos that couldn't be evaluated. Empty subsections are omitted;
+// the section header itself is suppressed when nothing has any rows.
+func writeRepoDetailsSection(b *strings.Builder, org string, scanned, skipped []RepoResult) {
 	type bucketEntry struct {
 		bucket Bucket
 		repos  []RepoResult
@@ -207,17 +234,14 @@ func writeRepoDetailsSection(b *strings.Builder, org string, scanned []RepoResul
 		}
 	}
 
-	// Suppress the entire ## Repository details heading if every bucket is
-	// empty. This shouldn't happen if we get here (caller guards on
-	// len(scanned) > 0) but keeps the writer robust.
-	hasAny := false
+	hasScored := false
 	for _, g := range groups {
 		if len(g.repos) > 0 {
-			hasAny = true
+			hasScored = true
 			break
 		}
 	}
-	if !hasAny {
+	if !hasScored && len(skipped) == 0 {
 		return
 	}
 
@@ -227,6 +251,9 @@ func writeRepoDetailsSection(b *strings.Builder, org string, scanned []RepoResul
 			continue
 		}
 		writeBucketSection(b, org, g.bucket, g.repos)
+	}
+	if len(skipped) > 0 {
+		writeSkippedSubsection(b, org, skipped)
 	}
 }
 
@@ -256,7 +283,7 @@ func writeBucketSection(b *strings.Builder, org string, bucket Bucket, repos []R
 	}
 
 	for _, rr := range repos {
-		_, scoredPassing, scoredTotal, scorePct := BucketOf(rr)
+		_, _, _, scorePct := BucketOf(rr)
 
 		var failingScored, failingAdditional []string
 		for _, res := range rr.Results {
@@ -271,8 +298,8 @@ func writeBucketSection(b *strings.Builder, org string, bucket Bucket, repos []R
 		}
 
 		fmt.Fprintf(b,
-			"\n<details>\n<summary><a href=\"https://github.com/%s/%s\">%s</a> - %d%% (%d/%d scored rules passing)</summary>\n",
-			org, rr.RepoName, rr.RepoName, scorePct, scoredPassing, scoredTotal,
+			"\n<details>\n<summary><a href=\"https://github.com/%s/%s\">%s</a> - %d%%</summary>\n",
+			org, rr.RepoName, rr.RepoName, scorePct,
 		)
 		if len(failingScored) > 0 {
 			b.WriteString("\n**Failing scored rules:**\n")
@@ -297,8 +324,12 @@ func pluralRepos(n int) string {
 	return fmt.Sprintf("%d repos", n)
 }
 
-func writeSkippedSection(b *strings.Builder, org string, skipped []RepoResult) {
-	fmt.Fprintf(b, "\n## ⚠️ Skipped (%s)\n\n", pluralRepos(len(skipped)))
+// writeSkippedSubsection emits the ### Skipped (N) heading and the list
+// of repos that couldn't be scanned. Rendered as the last subsection
+// inside ## Repository details so skipped repos read as another
+// classification (after Weak) rather than a separate document section.
+func writeSkippedSubsection(b *strings.Builder, org string, skipped []RepoResult) {
+	fmt.Fprintf(b, "\n### Skipped (%s)\n\n", pluralRepos(len(skipped)))
 	for _, rr := range skipped {
 		if rr.KnownSkipReason != "" {
 			fmt.Fprintf(b, "- [%s](https://github.com/%s/%s) - %s\n", rr.RepoName, org, rr.RepoName, rr.KnownSkipReason)
