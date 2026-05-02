@@ -23,27 +23,71 @@ import (
 	"github.com/CodatusHQ/scanner"
 )
 
-// stats is the JSON shape written to <out>/<org>/stats.json. Field names
-// match the snake_case keys requested by the bulk-scan use case (cold-email
-// research personalization).
+// stats is the JSON shape written to <out>/<org>/stats.json. The split
+// between scored_rules and additional_checks mirrors the Markdown
+// scorecard's two-section model: scored rules drive the org-level score,
+// additional checks are informational coverage.
+//
+// Score is *int (rather than int) so we can serialize "N/A" as JSON null
+// when the org had no scanned repos.
 type stats struct {
-	Org                  string                       `json:"org"`
-	ScannedAt            time.Time                    `json:"scanned_at"`
-	TotalPublicRepos     int                          `json:"total_public_repos"`
-	ForksExcluded        int                          `json:"forks_excluded"`
-	ArchivedExcluded     int                          `json:"archived_excluded"`
-	ReposScanned         int                          `json:"repos_scanned"`
-	CompliancePercentage int                          `json:"compliance_percentage"`
-	FullyCompliantCount  int                          `json:"fully_compliant_count"`
-	NonCompliantCount    int                          `json:"non_compliant_count"`
-	RuleResults          map[string]ruleAggregate     `json:"rule_results"`
-	MostRecentCommit     string                       `json:"most_recent_commit"`
+	Org              string                `json:"org"`
+	ScannedAt        time.Time             `json:"scanned_at"`
+	TotalPublicRepos int                   `json:"total_public_repos"`
+	ForksExcluded    int                   `json:"forks_excluded"`
+	ArchivedExcluded int                   `json:"archived_excluded"`
+	ReposScanned     int                   `json:"repos_scanned"`
+	Score            *int                  `json:"score"`
+	RepoBuckets      bucketCounts          `json:"repo_buckets"`
+	ScoredRules      orderedRuleAggregates `json:"scored_rules"`
+	AdditionalChecks orderedRuleAggregates `json:"additional_checks"`
+	MostRecentCommit string                `json:"most_recent_commit"`
 }
 
 type ruleAggregate struct {
 	Passing  int `json:"passing"`
 	Failing  int `json:"failing"`
 	PassRate int `json:"pass_rate"`
+}
+
+type bucketCounts struct {
+	Strong   int `json:"strong"`
+	Moderate int `json:"moderate"`
+	Weak     int `json:"weak"`
+}
+
+// orderedRuleAggregates is a slice of (key, value) pairs that marshals to a
+// JSON object preserving slice order. Go's default map[string]X marshalling
+// sorts keys alphabetically, which would scramble the importance order
+// callers care about.
+type orderedRuleAggregates []ruleAggregateEntry
+
+type ruleAggregateEntry struct {
+	Key   string
+	Value ruleAggregate
+}
+
+func (o orderedRuleAggregates) MarshalJSON() ([]byte, error) {
+	var b strings.Builder
+	b.WriteString("{")
+	for i, e := range o {
+		if i > 0 {
+			b.WriteString(",")
+		}
+		keyJSON, err := json.Marshal(e.Key)
+		if err != nil {
+			return nil, err
+		}
+		valJSON, err := json.Marshal(e.Value)
+		if err != nil {
+			return nil, err
+		}
+		b.Write(keyJSON)
+		b.WriteString(":")
+		b.Write(valJSON)
+	}
+	b.WriteString("}")
+	return []byte(b.String()), nil
 }
 
 func main() {
@@ -118,9 +162,12 @@ func main() {
 		}
 
 		succeeded = append(succeeded, org)
-		compliancePct, fullyCompliant := computeCompliance(sr)
-		fmt.Fprintf(os.Stderr, " ok (%d scanned, %d/%d compliant = %d%%)\n",
-			len(sr.Results), fullyCompliant, len(sr.Results), compliancePct)
+		score, defined := scanner.Score(sr)
+		if defined {
+			fmt.Fprintf(os.Stderr, " ok (%d scanned, score %d/100)\n", len(sr.Results), score)
+		} else {
+			fmt.Fprintf(os.Stderr, " ok (%d scanned, score N/A)\n", len(sr.Results))
+		}
 	}
 
 	fmt.Fprintf(os.Stderr, "\nSummary: %d succeeded, %d failed, %d not attempted.\n",
@@ -194,45 +241,47 @@ func writeOrgOutput(outDir string, sr scanner.ScanResult) error {
 }
 
 func buildStats(sr scanner.ScanResult) stats {
-	pct, fullyCompliant := computeCompliance(sr)
 	mostRecent := ""
 	if t := mostRecentCommit(sr); !t.IsZero() {
 		mostRecent = t.Format("2006-01-02")
 	}
+	var scorePtr *int
+	if score, defined := scanner.Score(sr); defined {
+		scorePtr = &score
+	}
 	return stats{
-		Org:                  sr.Org,
-		ScannedAt:            sr.ScannedAt,
-		TotalPublicRepos:     sr.TotalRepos,
-		ForksExcluded:        sr.ForksExcluded,
-		ArchivedExcluded:     sr.ArchivedExcluded,
-		ReposScanned:         len(sr.Results),
-		CompliancePercentage: pct,
-		FullyCompliantCount:  fullyCompliant,
-		NonCompliantCount:    len(sr.Results) - fullyCompliant,
-		RuleResults:          aggregateRules(sr.Results),
-		MostRecentCommit:     mostRecent,
+		Org:              sr.Org,
+		ScannedAt:        sr.ScannedAt,
+		TotalPublicRepos: sr.TotalRepos,
+		ForksExcluded:    sr.ForksExcluded,
+		ArchivedExcluded: sr.ArchivedExcluded,
+		ReposScanned:     len(sr.Results),
+		Score:            scorePtr,
+		RepoBuckets:      bucketCountsFor(sr.Results),
+		ScoredRules:      aggregate(sr.Results, scanner.ScoredRules()),
+		AdditionalChecks: aggregate(sr.Results, scanner.AdditionalRules()),
+		MostRecentCommit: mostRecent,
 	}
 }
 
-func computeCompliance(sr scanner.ScanResult) (pct int, fullyCompliant int) {
-	for _, rr := range sr.Results {
-		if isFullyCompliant(rr) {
-			fullyCompliant++
+// bucketCountsFor counts repos per bucket. The struct fields match the
+// JSON contract (strong/moderate/weak); if scanner.Buckets() ever adds a
+// new bucket name this function silently drops it - that mismatch is
+// caught by TestBucketCountsFor and TestBuildStats_NewShape.
+func bucketCountsFor(results []scanner.RepoResult) bucketCounts {
+	var bc bucketCounts
+	for _, rr := range results {
+		bucket, _, _, _ := scanner.BucketOf(rr)
+		switch bucket.Name {
+		case "Strong":
+			bc.Strong++
+		case "Moderate":
+			bc.Moderate++
+		case "Weak":
+			bc.Weak++
 		}
 	}
-	if len(sr.Results) == 0 {
-		return 0, 0
-	}
-	return fullyCompliant * 100 / len(sr.Results), fullyCompliant
-}
-
-func isFullyCompliant(rr scanner.RepoResult) bool {
-	for _, r := range rr.Results {
-		if !r.Passed {
-			return false
-		}
-	}
-	return true
+	return bc
 }
 
 // mostRecentCommit returns the latest MostRecentCommit across every repo in
@@ -281,38 +330,33 @@ func jsonKey(ruleName string) string {
 	return strings.TrimRight(out, "_")
 }
 
-// aggregateRules computes per-rule passing/failing/pass_rate counts keyed by
-// the snake_case form of each rule's display name. Only rules listed in
-// scanner.AllRules() are included - if a result names a rule we don't know
-// about, it is dropped (defensive against renamed/removed rules).
-func aggregateRules(results []scanner.RepoResult) map[string]ruleAggregate {
-	known := make(map[string]bool)
-	for _, r := range scanner.AllRules() {
-		known[r.Name()] = true
-	}
-
-	out := make(map[string]ruleAggregate)
+// aggregate counts pass/fail across results for a fixed list of rules,
+// preserving the rules' input order. Rule names not present in the scan
+// results contribute zero counts (they still appear in the output, with
+// pass_rate=0). The caller decides which rules to pass in (typically
+// scanner.ScoredRules() or scanner.AdditionalRules()).
+func aggregate(results []scanner.RepoResult, rules []scanner.Rule) orderedRuleAggregates {
+	out := make(orderedRuleAggregates, 0, len(rules))
 	total := len(results)
-	for _, rr := range results {
-		for _, rule := range rr.Results {
-			if !known[rule.RuleName] {
-				continue
+	for _, rule := range rules {
+		var agg ruleAggregate
+		for _, rr := range results {
+			for _, res := range rr.Results {
+				if res.RuleName != rule.Name() {
+					continue
+				}
+				if res.Passed {
+					agg.Passing++
+				} else {
+					agg.Failing++
+				}
+				break
 			}
-			key := jsonKey(rule.RuleName)
-			agg := out[key]
-			if rule.Passed {
-				agg.Passing++
-			} else {
-				agg.Failing++
-			}
-			out[key] = agg
 		}
-	}
-	for key, agg := range out {
 		if total > 0 {
 			agg.PassRate = agg.Passing * 100 / total
 		}
-		out[key] = agg
+		out = append(out, ruleAggregateEntry{Key: jsonKey(rule.Name()), Value: agg})
 	}
 	return out
 }

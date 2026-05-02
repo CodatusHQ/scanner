@@ -8,20 +8,28 @@ import (
 
 var testTime = time.Date(2026, 4, 5, 12, 0, 0, 0, time.UTC)
 
-func TestGenerateReport_MixedCompliance(t *testing.T) {
+// allScored returns a []RuleResult that has every scored rule, with the
+// first `passing` ones marked as passed. Test helper for building repo
+// results in the new score/bucket-aware tests.
+func allScored(passing int) []RuleResult {
+	var out []RuleResult
+	for i, r := range ScoredRules() {
+		out = append(out, RuleResult{RuleName: r.Name(), Passed: i < passing})
+	}
+	return out
+}
+
+func TestGenerateReport_StrongAndWeakBuckets(t *testing.T) {
+	// Two repos: one strong (5/5 scored passing), one weak (0/5 scored).
+	// Tests the new core flow: header → scored table → score callout →
+	// additional checks → rule reference (split) → repo details (buckets).
 	sr := ScanResult{
 		Org:        "test-org",
 		ScannedAt:  testTime,
 		TotalRepos: 2,
 		Results: []RepoResult{
-			{RepoName: "alpha", Results: []RuleResult{
-				{RuleName: "Has repo description", Passed: true},
-				{RuleName: "Has activity", Passed: true},
-			}},
-			{RepoName: "beta", Results: []RuleResult{
-				{RuleName: "Has repo description", Passed: false},
-				{RuleName: "Has activity", Passed: true},
-			}},
+			{RepoName: "alpha", Results: allScored(5)},
+			{RepoName: "beta", Results: allScored(0)},
 		},
 	}
 
@@ -33,207 +41,93 @@ func TestGenerateReport_MixedCompliance(t *testing.T) {
 **Scanned:** 2026-04-05 12:00 UTC
 **Total repos:** 2
 **Repos scanned:** 2
-**Compliant:** 1/2 (50%) *(a repo is compliant when it passes all rules below)*
 
-## Summary
+## Scored rules
 
 | Rule | Passing | Failing | Pass rate |
 |------|---------|---------|----------|
-| Has repo description | 1 | 1 | 50% |
-| Has activity | 2 | 0 | 100% |
+| Has branch protection | 1 | 1 | 50% |
+| Has required reviewers | 1 | 1 | 50% |
+| Requires status checks before merging | 1 | 1 | 50% |
+| Has CODEOWNERS | 1 | 1 | 50% |
+| Has CI workflow | 1 | 1 | 50% |
+
+**Score: 50/100** (average pass rate across the scored rules above)
+
+## Additional checks
+
+| Check | Passing | Failing | Coverage |
+|------|---------|---------|----------|
+| Has README | 0 | 0 | 0% |
+| Has LICENSE | 0 | 0 | 0% |
+| Has repo description | 0 | 0 | 0% |
+| Has activity | 0 | 0 | 0% |
+| Has SECURITY.md | 0 | 0 | 0% |
+
+## Repository details
+
+### Strong (≥80%)
 
 <details>
-<summary>Rule reference - what each rule checks and how to fix it</summary>
+<summary><a href="https://github.com/test-org/alpha">alpha</a> - 100% (5/5 scored rules passing)</summary>
 
-### Has repo description
+</details>
 
-- **What it checks:** The repository has a non-empty description set in repo settings (visible at the top of the GitHub repo page).
-- **How to fix:** Edit the repo and add a one-line description.
+### Weak (≤39%)
+
+<details>
+<summary><a href="https://github.com/test-org/beta">beta</a> - 0% (0/5 scored rules passing)</summary>
+
+**Failing scored rules:**
+- Has branch protection
+- Has required reviewers
+- Requires status checks before merging
+- Has CODEOWNERS
+- Has CI workflow
+
+</details>
+
+## Rule reference
+
+<details>
+<summary>What each rule checks and how to fix it</summary>
+
+### Scored rules
+
+#### Has branch protection
+
+- **What it checks:** A branch-protection rule is configured on the default branch.
+- **How to fix:** In repo Settings > Branches, add a protection rule for the default branch. [GitHub docs](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches).
 
 ---
 
-### Has activity
+#### Has required reviewers
 
-- **What it checks:** The repository has had a commit (push) within the last 12 months.
-- **How to fix:** Push a commit, or archive the repository if it is no longer maintained.
+- **What it checks:** The default branch's protection rules require at least one approving review before a PR can be merged.
+- **How to fix:** In repo Settings > Branches, edit the default-branch protection rule and turn on "Require pull request reviews before merging" with at least 1 required reviewer.
 
-</details>
+---
 
-## ✅ Fully compliant (1 repo)
+#### Requires status checks before merging
 
-<details>
-<summary>All rules passing</summary>
+- **What it checks:** The default branch's protection rules require at least one status check to pass before a PR can be merged.
+- **How to fix:** In repo Settings > Branches, edit the default-branch protection rule and turn on "Require status checks to pass before merging".
 
-[alpha](https://github.com/test-org/alpha)
+---
 
-</details>
+#### Has CODEOWNERS
 
-## ❌ Non-compliant (1 repo)
+- **What it checks:** A CODEOWNERS file exists at the repo root, in .github/, or in docs/.
+- **How to fix:** Add a CODEOWNERS file mapping paths to GitHub users or teams. [GitHub docs](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners).
 
-<details>
-<summary><a href="https://github.com/test-org/beta">beta</a> - 1 failing</summary>
+---
 
-- Has repo description
+#### Has CI workflow
 
-</details>
-
-`
-	if got != want {
-		t.Errorf("report mismatch.\n\nGOT:\n%s\n\nWANT:\n%s", got, want)
-	}
-}
-
-func TestGenerateReport_AllCompliant(t *testing.T) {
-	sr := ScanResult{
-		Org:        "my-org",
-		ScannedAt:  testTime,
-		TotalRepos: 2,
-		Results: []RepoResult{
-			{RepoName: "alpha", Results: []RuleResult{{RuleName: "Rule A", Passed: true}}},
-			{RepoName: "beta", Results: []RuleResult{{RuleName: "Rule A", Passed: true}}},
-		},
-	}
-
-	got := GenerateReport(sr)
-
-	want := `# Codatus - Engineering Standards Scorecard
-
-**Org:** my-org
-**Scanned:** 2026-04-05 12:00 UTC
-**Total repos:** 2
-**Repos scanned:** 2
-**Compliant:** 2/2 (100%) *(a repo is compliant when it passes all rules below)*
-
-## Summary
-
-| Rule | Passing | Failing | Pass rate |
-|------|---------|---------|----------|
-| Rule A | 2 | 0 | 100% |
-
-## ✅ Fully compliant (2 repos)
-
-<details>
-<summary>All rules passing</summary>
-
-[alpha](https://github.com/my-org/alpha)
-[beta](https://github.com/my-org/beta)
+- **What it checks:** At least one .yml or .yaml workflow file exists in .github/workflows/.
+- **How to fix:** Add a YAML workflow in .github/workflows/. [GitHub Actions quickstart](https://docs.github.com/en/actions/quickstart).
 
 </details>
-`
-	if got != want {
-		t.Errorf("report mismatch.\n\nGOT:\n%s\n\nWANT:\n%s", got, want)
-	}
-}
-
-func TestGenerateReport_AllNonCompliant(t *testing.T) {
-	sr := ScanResult{
-		Org:        "test-org",
-		ScannedAt:  testTime,
-		TotalRepos: 2,
-		Results: []RepoResult{
-			{RepoName: "repo-1", Results: []RuleResult{
-				{RuleName: "Rule A", Passed: false},
-				{RuleName: "Rule B", Passed: false},
-			}},
-			{RepoName: "repo-2", Results: []RuleResult{
-				{RuleName: "Rule A", Passed: true},
-				{RuleName: "Rule B", Passed: false},
-			}},
-		},
-	}
-
-	got := GenerateReport(sr)
-
-	want := `# Codatus - Engineering Standards Scorecard
-
-**Org:** test-org
-**Scanned:** 2026-04-05 12:00 UTC
-**Total repos:** 2
-**Repos scanned:** 2
-**Compliant:** 0/2 (0%) *(a repo is compliant when it passes all rules below)*
-
-## Summary
-
-| Rule | Passing | Failing | Pass rate |
-|------|---------|---------|----------|
-| Rule B | 0 | 2 | 0% |
-| Rule A | 1 | 1 | 50% |
-
-## ❌ Non-compliant (2 repos)
-
-<details>
-<summary><a href="https://github.com/test-org/repo-1">repo-1</a> - 2 failing</summary>
-
-- Rule A
-- Rule B
-
-</details>
-
-<details>
-<summary><a href="https://github.com/test-org/repo-2">repo-2</a> - 1 failing</summary>
-
-- Rule B
-
-</details>
-
-`
-	if got != want {
-		t.Errorf("report mismatch.\n\nGOT:\n%s\n\nWANT:\n%s", got, want)
-	}
-}
-
-func TestGenerateReport_SummarySortedByPassRateAscending(t *testing.T) {
-	sr := ScanResult{
-		Org:        "test-org",
-		ScannedAt:  testTime,
-		TotalRepos: 2,
-		Results: []RepoResult{
-			{RepoName: "repo-1", Results: []RuleResult{
-				{RuleName: "Rule A", Passed: true},
-				{RuleName: "Rule B", Passed: false},
-			}},
-			{RepoName: "repo-2", Results: []RuleResult{
-				{RuleName: "Rule A", Passed: true},
-				{RuleName: "Rule B", Passed: true},
-			}},
-		},
-	}
-
-	got := GenerateReport(sr)
-
-	want := `# Codatus - Engineering Standards Scorecard
-
-**Org:** test-org
-**Scanned:** 2026-04-05 12:00 UTC
-**Total repos:** 2
-**Repos scanned:** 2
-**Compliant:** 1/2 (50%) *(a repo is compliant when it passes all rules below)*
-
-## Summary
-
-| Rule | Passing | Failing | Pass rate |
-|------|---------|---------|----------|
-| Rule B | 1 | 1 | 50% |
-| Rule A | 2 | 0 | 100% |
-
-## ✅ Fully compliant (1 repo)
-
-<details>
-<summary>All rules passing</summary>
-
-[repo-2](https://github.com/test-org/repo-2)
-
-</details>
-
-## ❌ Non-compliant (1 repo)
-
-<details>
-<summary><a href="https://github.com/test-org/repo-1">repo-1</a> - 1 failing</summary>
-
-- Rule B
-
-</details>
-
 `
 	if got != want {
 		t.Errorf("report mismatch.\n\nGOT:\n%s\n\nWANT:\n%s", got, want)
@@ -241,11 +135,7 @@ func TestGenerateReport_SummarySortedByPassRateAscending(t *testing.T) {
 }
 
 func TestGenerateReport_EmptyResults(t *testing.T) {
-	sr := ScanResult{
-		Org:       "empty-org",
-		ScannedAt: testTime,
-	}
-
+	sr := ScanResult{Org: "empty-org", ScannedAt: testTime}
 	got := GenerateReport(sr)
 
 	want := `# Codatus - Engineering Standards Scorecard
@@ -261,361 +151,256 @@ No repos found.
 	}
 }
 
+func TestGenerateReport_ScoreNAWhenNoScannedRepos(t *testing.T) {
+	// Only skipped repos, no successful scans → score is N/A.
+	sr := ScanResult{
+		Org:       "test-org",
+		ScannedAt: testTime,
+		Skipped: []RepoResult{
+			{RepoName: "empty-repo", KnownSkipReason: "repository is empty"},
+		},
+	}
+
+	got := GenerateReport(sr)
+
+	if !strings.Contains(got, "**Score: N/A** (no repos available to score)") {
+		t.Errorf("expected inline N/A score callout; got:\n%s", got)
+	}
+}
+
+func TestGenerateReport_BucketSectionOmittedWhenEmpty(t *testing.T) {
+	// All repos are strong - no Moderate or Weak headers should appear.
+	sr := ScanResult{
+		Org:        "test-org",
+		ScannedAt:  testTime,
+		TotalRepos: 2,
+		Results: []RepoResult{
+			{RepoName: "a", Results: allScored(5)},
+			{RepoName: "b", Results: allScored(4)},
+		},
+	}
+
+	got := GenerateReport(sr)
+
+	if !strings.Contains(got, "### Strong (≥80%)") {
+		t.Errorf("expected Strong section; got:\n%s", got)
+	}
+	if strings.Contains(got, "### Moderate") {
+		t.Errorf("did not expect Moderate section when no moderate repos; got:\n%s", got)
+	}
+	if strings.Contains(got, "### Weak") {
+		t.Errorf("did not expect Weak section when no weak repos; got:\n%s", got)
+	}
+}
+
+func TestGenerateReport_AdditionalChecksColumnHeaderIsCoverage(t *testing.T) {
+	sr := ScanResult{
+		Org:        "test-org",
+		ScannedAt:  testTime,
+		TotalRepos: 1,
+		Results:    []RepoResult{{RepoName: "a", Results: allScored(3)}},
+	}
+	got := GenerateReport(sr)
+
+	if !strings.Contains(got, "| Check | Passing | Failing | Coverage |") {
+		t.Errorf("expected additional checks table to use 'Coverage' column header; got:\n%s", got)
+	}
+	// Scored rules table keeps "Pass rate".
+	if !strings.Contains(got, "| Rule | Passing | Failing | Pass rate |") {
+		t.Errorf("expected scored rules table to keep 'Pass rate' column header; got:\n%s", got)
+	}
+}
+
+func TestGenerateReport_NoCompliantOrSkippedHeaderLines(t *testing.T) {
+	// The old header had "**Compliant: X/Y**". The new format drops it.
+	sr := ScanResult{
+		Org:        "test-org",
+		ScannedAt:  testTime,
+		TotalRepos: 1,
+		Results:    []RepoResult{{RepoName: "a", Results: allScored(5)}},
+	}
+	got := GenerateReport(sr)
+
+	if strings.Contains(got, "**Compliant:**") {
+		t.Errorf("expected no Compliant header line in new format; got:\n%s", got)
+	}
+	if strings.Contains(got, "(a repo is compliant when it passes all rules below)") {
+		t.Errorf("expected no compliance-definition footnote; got:\n%s", got)
+	}
+}
+
+func TestGenerateReport_PerRepoOmitsEmptyFailureSection(t *testing.T) {
+	// A strong repo with no failing additional checks should NOT render an
+	// empty "Additional check failures:" section.
+	sr := ScanResult{
+		Org:        "test-org",
+		ScannedAt:  testTime,
+		TotalRepos: 1,
+		Results: []RepoResult{
+			{
+				RepoName: "perfect",
+				Results: append(allScored(5), []RuleResult{
+					{RuleName: "Has README", Passed: true},
+					{RuleName: "Has LICENSE", Passed: true},
+					{RuleName: "Has repo description", Passed: true},
+					{RuleName: "Has activity", Passed: true},
+					{RuleName: "Has SECURITY.md", Passed: true},
+				}...),
+			},
+		},
+	}
+	got := GenerateReport(sr)
+
+	if strings.Contains(got, "**Failing scored rules:**") {
+		t.Errorf("expected no 'Failing scored rules' for a 5/5 repo; got:\n%s", got)
+	}
+	if strings.Contains(got, "**Additional check failures:**") {
+		t.Errorf("expected no 'Additional check failures' for a fully-passing repo; got:\n%s", got)
+	}
+}
+
+func TestGenerateReport_PerRepoSplitsFailuresByCategory(t *testing.T) {
+	// A moderate repo: 3/5 scored passing, missing CODEOWNERS and CI;
+	// also missing two additional checks. Both subsections must appear.
+	results := append(allScored(3), []RuleResult{
+		{RuleName: "Has README", Passed: true},
+		{RuleName: "Has LICENSE", Passed: false},
+		{RuleName: "Has repo description", Passed: false},
+	}...)
+
+	sr := ScanResult{
+		Org:        "test-org",
+		ScannedAt:  testTime,
+		TotalRepos: 1,
+		Results:    []RepoResult{{RepoName: "midrepo", Results: results}},
+	}
+	got := GenerateReport(sr)
+
+	if !strings.Contains(got, "**Failing scored rules:**") {
+		t.Errorf("expected 'Failing scored rules' section; got:\n%s", got)
+	}
+	if !strings.Contains(got, "**Additional check failures:**") {
+		t.Errorf("expected 'Additional check failures' section; got:\n%s", got)
+	}
+
+	// Failing scored: Has CODEOWNERS, Has CI workflow (positions 3 and 4).
+	if !strings.Contains(got, "- Has CODEOWNERS\n") {
+		t.Errorf("expected scored failure 'Has CODEOWNERS' listed; got:\n%s", got)
+	}
+	if !strings.Contains(got, "- Has CI workflow\n") {
+		t.Errorf("expected scored failure 'Has CI workflow' listed; got:\n%s", got)
+	}
+	// Failing additional: Has LICENSE, Has repo description.
+	if !strings.Contains(got, "- Has LICENSE\n") {
+		t.Errorf("expected additional failure 'Has LICENSE' listed; got:\n%s", got)
+	}
+	if !strings.Contains(got, "- Has repo description\n") {
+		t.Errorf("expected additional failure 'Has repo description' listed; got:\n%s", got)
+	}
+}
+
+func TestGenerateReport_RuleReferenceSplitByCategory(t *testing.T) {
+	sr := ScanResult{
+		Org:        "test-org",
+		ScannedAt:  testTime,
+		TotalRepos: 1,
+		Results: []RepoResult{
+			{RepoName: "a", Results: append(allScored(2), RuleResult{RuleName: "Has README", Passed: true})},
+		},
+	}
+	got := GenerateReport(sr)
+
+	if !strings.Contains(got, "## Rule reference\n") {
+		t.Errorf("expected '## Rule reference' heading; got:\n%s", got)
+	}
+	if !strings.Contains(got, "<summary>What each rule checks and how to fix it</summary>") {
+		t.Errorf("expected rule reference summary; got:\n%s", got)
+	}
+	scoredHeaderIdx := strings.Index(got, "### Scored rules\n")
+	additionalHeaderIdx := strings.Index(got, "### Additional checks\n")
+	if scoredHeaderIdx == -1 || additionalHeaderIdx == -1 {
+		t.Fatalf("expected both reference subsections; got:\n%s", got)
+	}
+	if scoredHeaderIdx >= additionalHeaderIdx {
+		t.Errorf("expected Scored rules to appear before Additional checks in reference")
+	}
+}
+
 func TestGenerateReport_WithSkippedRepos(t *testing.T) {
 	sr := ScanResult{
 		Org:        "test-org",
 		ScannedAt:  testTime,
 		TotalRepos: 3,
-		Results: []RepoResult{
-			{RepoName: "good-repo", Results: []RuleResult{
-				{RuleName: "Has repo description", Passed: true},
-			}},
-		},
+		Results:    []RepoResult{{RepoName: "good-repo", Results: allScored(5)}},
 		Skipped: []RepoResult{
 			{RepoName: "empty-repo", KnownSkipReason: "repository is empty"},
 			{RepoName: "huge-repo", KnownSkipReason: "file tree too large (truncated by GitHub API)"},
 		},
 	}
-
 	got := GenerateReport(sr)
 
-	want := `# Codatus - Engineering Standards Scorecard
-
-**Org:** test-org
-**Scanned:** 2026-04-05 12:00 UTC
-**Total repos:** 3
-**Repos scanned:** 1
-**Compliant:** 1/1 (100%) *(a repo is compliant when it passes all rules below)*
-**Skipped:** 2
-
-## Summary
-
-| Rule | Passing | Failing | Pass rate |
-|------|---------|---------|----------|
-| Has repo description | 1 | 0 | 100% |
-
-<details>
-<summary>Rule reference - what each rule checks and how to fix it</summary>
-
-### Has repo description
-
-- **What it checks:** The repository has a non-empty description set in repo settings (visible at the top of the GitHub repo page).
-- **How to fix:** Edit the repo and add a one-line description.
-
-</details>
-
-## ✅ Fully compliant (1 repo)
-
-<details>
-<summary>All rules passing</summary>
-
-[good-repo](https://github.com/test-org/good-repo)
-
-</details>
-
-## ⚠️ Skipped (2 repos)
-
-- [empty-repo](https://github.com/test-org/empty-repo) - repository is empty
-- [huge-repo](https://github.com/test-org/huge-repo) - file tree too large (truncated by GitHub API)
-`
-	if got != want {
-		t.Errorf("report mismatch.\n\nGOT:\n%s\n\nWANT:\n%s", got, want)
+	if !strings.Contains(got, "**Skipped:** 2") {
+		t.Errorf("expected '**Skipped:** 2' header line; got:\n%s", got)
 	}
-}
-
-func TestGenerateReport_OnlySkippedRepos(t *testing.T) {
-	sr := ScanResult{
-		Org:        "test-org",
-		ScannedAt:  testTime,
-		TotalRepos: 1,
-		Skipped: []RepoResult{
-			{RepoName: "empty-repo", KnownSkipReason: "repository is empty"},
-		},
+	if !strings.Contains(got, "## ⚠️ Skipped (2 repos)") {
+		t.Errorf("expected skipped section heading; got:\n%s", got)
 	}
-
-	got := GenerateReport(sr)
-
-	want := `# Codatus - Engineering Standards Scorecard
-
-**Org:** test-org
-**Scanned:** 2026-04-05 12:00 UTC
-**Total repos:** 1
-**Repos scanned:** 0
-**Skipped:** 1
-
-## ⚠️ Skipped (1 repo)
-
-- [empty-repo](https://github.com/test-org/empty-repo) - repository is empty
-`
-	if got != want {
-		t.Errorf("report mismatch.\n\nGOT:\n%s\n\nWANT:\n%s", got, want)
+	if !strings.Contains(got, "[empty-repo](https://github.com/test-org/empty-repo) - repository is empty") {
+		t.Errorf("expected empty-repo entry; got:\n%s", got)
 	}
 }
 
 func TestGenerateReport_WithUnexpectedSkipError(t *testing.T) {
 	sr := ScanResult{
-		Org:        "test-org",
-		ScannedAt:  testTime,
-		TotalRepos: 2,
+		Org:       "test-org",
+		ScannedAt: testTime,
 		Skipped: []RepoResult{
-			{RepoName: "broken-repo", UnknownSkipError: "get tree for broken-repo: status 500"},
-			{RepoName: "empty-repo", KnownSkipReason: "repository is empty"},
+			{RepoName: "broken-repo", UnknownSkipError: "get tree: status 500"},
 		},
 	}
-
 	got := GenerateReport(sr)
 
-	want := `# Codatus - Engineering Standards Scorecard
-
-**Org:** test-org
-**Scanned:** 2026-04-05 12:00 UTC
-**Total repos:** 2
-**Repos scanned:** 0
-**Skipped:** 2
-
-## ⚠️ Skipped (2 repos)
-
-- [broken-repo](https://github.com/test-org/broken-repo) - unexpected error: get tree for broken-repo: status 500
-- [empty-repo](https://github.com/test-org/empty-repo) - repository is empty
-`
-	if got != want {
-		t.Errorf("report mismatch.\n\nGOT:\n%s\n\nWANT:\n%s", got, want)
+	if !strings.Contains(got, "[broken-repo](https://github.com/test-org/broken-repo) - unexpected error: get tree: status 500") {
+		t.Errorf("expected unexpected-error rendering; got:\n%s", got)
 	}
 }
 
-// TestGenerateReport_ForksExcludedLineEmitted verifies the **Forks excluded:**
-// header line appears only when ScanResult.ForksExcluded > 0, and shows the
-// correct count.
-func TestGenerateReport_ForksExcludedLineEmitted(t *testing.T) {
-	sr := ScanResult{
-		Org:           "test-org",
-		ScannedAt:     testTime,
-		TotalRepos:    5,
-		ForksExcluded: 2,
-		Results: []RepoResult{
-			{RepoName: "alpha", Results: []RuleResult{{RuleName: "Rule A", Passed: true}}},
-			{RepoName: "beta", Results: []RuleResult{{RuleName: "Rule A", Passed: true}}},
-			{RepoName: "gamma", Results: []RuleResult{{RuleName: "Rule A", Passed: true}}},
-		},
-	}
-
-	got := GenerateReport(sr)
-
-	if !strings.Contains(got, "**Total repos:** 5") {
-		t.Errorf("expected '**Total repos:** 5' line; got:\n%s", got)
-	}
-	if !strings.Contains(got, "**Forks excluded:** 2") {
-		t.Errorf("expected '**Forks excluded:** 2' line; got:\n%s", got)
-	}
-	if strings.Contains(got, "**Archived excluded:**") {
-		t.Errorf("expected no archived-excluded line when count is 0; got:\n%s", got)
-	}
-}
-
-// TestGenerateReport_ArchivedExcludedLineEmitted verifies the
-// **Archived excluded:** header line appears only when
-// ScanResult.ArchivedExcluded > 0, and shows the correct count.
-func TestGenerateReport_ArchivedExcludedLineEmitted(t *testing.T) {
+func TestGenerateReport_HeaderEmitsExclusionLinesWhenNonzero(t *testing.T) {
 	sr := ScanResult{
 		Org:              "test-org",
 		ScannedAt:        testTime,
-		TotalRepos:       4,
+		TotalRepos:       14,
+		ForksExcluded:    3,
 		ArchivedExcluded: 1,
-		Results: []RepoResult{
-			{RepoName: "alpha", Results: []RuleResult{{RuleName: "Rule A", Passed: true}}},
-			{RepoName: "beta", Results: []RuleResult{{RuleName: "Rule A", Passed: true}}},
-			{RepoName: "gamma", Results: []RuleResult{{RuleName: "Rule A", Passed: true}}},
-		},
+		Results:          []RepoResult{{RepoName: "a", Results: allScored(5)}},
 	}
-
 	got := GenerateReport(sr)
 
-	if !strings.Contains(got, "**Archived excluded:** 1") {
-		t.Errorf("expected '**Archived excluded:** 1' line; got:\n%s", got)
-	}
-	if strings.Contains(got, "**Forks excluded:**") {
-		t.Errorf("expected no forks-excluded line when count is 0; got:\n%s", got)
-	}
-}
-
-// TestGenerateReport_AllExclusionLinesEmittedTogether verifies that when
-// both ForksExcluded and ArchivedExcluded are > 0, both lines appear and
-// in the documented order: Total -> Forks -> Archived -> Repos scanned.
-func TestGenerateReport_AllExclusionLinesEmittedTogether(t *testing.T) {
-	sr := ScanResult{
-		Org:              "acme-corp",
-		ScannedAt:        testTime,
-		TotalRepos:       32,
-		ForksExcluded:    4,
-		ArchivedExcluded: 2,
-		Results: []RepoResult{
-			{RepoName: "alpha", Results: []RuleResult{{RuleName: "Rule A", Passed: true}}},
-		},
-	}
-
-	got := GenerateReport(sr)
-
-	// All four lines must appear in order.
-	totalIdx := strings.Index(got, "**Total repos:** 32")
-	forksIdx := strings.Index(got, "**Forks excluded:** 4")
-	archivedIdx := strings.Index(got, "**Archived excluded:** 2")
+	totalIdx := strings.Index(got, "**Total repos:** 14")
+	forksIdx := strings.Index(got, "**Forks excluded:** 3")
+	archivedIdx := strings.Index(got, "**Archived excluded:** 1")
 	scannedIdx := strings.Index(got, "**Repos scanned:** 1")
-
 	if totalIdx == -1 || forksIdx == -1 || archivedIdx == -1 || scannedIdx == -1 {
 		t.Fatalf("expected all four header lines; got:\n%s", got)
 	}
 	if !(totalIdx < forksIdx && forksIdx < archivedIdx && archivedIdx < scannedIdx) {
-		t.Errorf("expected header lines in order Total -> Forks -> Archived -> Scanned; got:\n%s", got)
+		t.Errorf("expected order Total → Forks → Archived → Scanned; got:\n%s", got)
 	}
 }
 
-// TestGenerateReport_OmitsExclusionLinesWhenZero verifies that when no
-// exclusions occurred, the optional lines (Total repos when 0, Forks
-// excluded, Archived excluded) are omitted entirely.
-func TestGenerateReport_OmitsExclusionLinesWhenZero(t *testing.T) {
+func TestGenerateReport_HeaderOmitsExclusionLinesWhenZero(t *testing.T) {
 	sr := ScanResult{
 		Org:        "test-org",
 		ScannedAt:  testTime,
-		TotalRepos: 0,
-		Results: []RepoResult{
-			{RepoName: "alpha", Results: []RuleResult{{RuleName: "Rule A", Passed: true}}},
-		},
+		TotalRepos: 1,
+		Results:    []RepoResult{{RepoName: "a", Results: allScored(5)}},
 	}
-
 	got := GenerateReport(sr)
 
-	if strings.Contains(got, "**Total repos:**") {
-		t.Errorf("expected no '**Total repos:**' line when TotalRepos is 0; got:\n%s", got)
-	}
 	if strings.Contains(got, "**Forks excluded:**") {
-		t.Errorf("expected no '**Forks excluded:**' line when count is 0; got:\n%s", got)
+		t.Errorf("expected no Forks excluded line when zero; got:\n%s", got)
 	}
 	if strings.Contains(got, "**Archived excluded:**") {
-		t.Errorf("expected no '**Archived excluded:**' line when count is 0; got:\n%s", got)
-	}
-}
-
-func TestGenerateReport_ComplianceDefinitionAppended(t *testing.T) {
-	sr := ScanResult{
-		Org:        "test-org",
-		ScannedAt:  testTime,
-		TotalRepos: 1,
-		Results: []RepoResult{
-			{RepoName: "alpha", Results: []RuleResult{
-				{RuleName: "Has repo description", Passed: true},
-			}},
-		},
-	}
-
-	got := GenerateReport(sr)
-
-	if !strings.Contains(got, "**Compliant:** 1/1 (100%) *(a repo is compliant when it passes all rules below)*") {
-		t.Errorf("expected compliance definition appended to Compliant line; got:\n%s", got)
-	}
-}
-
-func TestGenerateReport_IncludesRuleReference(t *testing.T) {
-	// Use rule names that match the real rules in AllRules so the reference
-	// section is emitted.
-	sr := ScanResult{
-		Org:        "test-org",
-		ScannedAt:  testTime,
-		TotalRepos: 1,
-		Results: []RepoResult{
-			{RepoName: "alpha", Results: []RuleResult{
-				{RuleName: "Has SECURITY.md", Passed: false},
-				{RuleName: "Has CODEOWNERS", Passed: true},
-			}},
-		},
-	}
-
-	got := GenerateReport(sr)
-
-	if !strings.Contains(got, "<summary>Rule reference - what each rule checks and how to fix it</summary>") {
-		t.Errorf("expected rule reference summary; got:\n%s", got)
-	}
-	if !strings.Contains(got, "### Has SECURITY.md") {
-		t.Errorf("expected ### Has SECURITY.md heading in rule reference; got:\n%s", got)
-	}
-	if !strings.Contains(got, "### Has CODEOWNERS") {
-		t.Errorf("expected ### Has CODEOWNERS heading in rule reference; got:\n%s", got)
-	}
-	if !strings.Contains(got, "**What it checks:**") {
-		t.Errorf("expected What it checks lines in rule reference; got:\n%s", got)
-	}
-	if !strings.Contains(got, "**How to fix:**") {
-		t.Errorf("expected How to fix lines in rule reference; got:\n%s", got)
-	}
-
-	// Reference order must follow AllRules - HasSecurityMd appears before
-	// HasCodeowners in AllRules, regardless of how the summary table sorts.
-	secIdx := strings.Index(got, "### Has SECURITY.md")
-	cowIdx := strings.Index(got, "### Has CODEOWNERS")
-	if secIdx == -1 || cowIdx == -1 || secIdx >= cowIdx {
-		t.Errorf("expected rule reference order to follow AllRules (SECURITY.md before CODEOWNERS)")
-	}
-}
-
-// TestGenerateReport_RuleReferenceFormatting verifies the precise Markdown
-// shape of each rule reference entry: blank line after the H3, bullet list
-// of "What it checks" + "How to fix", and a `---` separator between rules
-// (but not after the last).
-func TestGenerateReport_RuleReferenceFormatting(t *testing.T) {
-	sr := ScanResult{
-		Org:        "test-org",
-		ScannedAt:  testTime,
-		TotalRepos: 1,
-		Results: []RepoResult{
-			{RepoName: "alpha", Results: []RuleResult{
-				{RuleName: "Has repo description", Passed: true},
-				{RuleName: "Has activity", Passed: true},
-			}},
-		},
-	}
-
-	got := GenerateReport(sr)
-
-	wantBlock := "### Has repo description\n\n- **What it checks:** "
-	if !strings.Contains(got, wantBlock) {
-		t.Errorf("expected blank line after H3 followed by bullet list; got:\n%s", got)
-	}
-	// `---` separator must appear between two rules - i.e. between the end of
-	// the first rule's bullet block and the next rule's H3.
-	if !strings.Contains(got, "\n\n---\n\n### Has activity\n") {
-		t.Errorf("expected `---` separator between rules; got:\n%s", got)
-	}
-	// No trailing `---` separator after the last rule (Has activity is last
-	// in AllRules). Use LastIndex to skip past summary-table cells that share
-	// the rule name.
-	lastH3 := strings.LastIndex(got, "### Has activity")
-	if lastH3 == -1 {
-		t.Fatal("expected ### Has activity heading in rule reference")
-	}
-	closingIdx := strings.Index(got[lastH3:], "</details>")
-	if closingIdx == -1 {
-		t.Fatal("expected </details> after last rule")
-	}
-	tail := got[lastH3 : lastH3+closingIdx]
-	if strings.Contains(tail, "\n---\n") {
-		t.Errorf("expected no trailing `---` separator after last rule; got tail:\n%s", tail)
-	}
-}
-
-func TestGenerateReport_RuleReferenceOmittedForUnknownRules(t *testing.T) {
-	sr := ScanResult{
-		Org:        "test-org",
-		ScannedAt:  testTime,
-		TotalRepos: 1,
-		Results: []RepoResult{
-			{RepoName: "alpha", Results: []RuleResult{
-				{RuleName: "Made-up rule", Passed: true},
-			}},
-		},
-	}
-
-	got := GenerateReport(sr)
-
-	if strings.Contains(got, "<summary>Rule reference") {
-		t.Errorf("expected no rule reference when no scanned rules match AllRules; got:\n%s", got)
+		t.Errorf("expected no Archived excluded line when zero; got:\n%s", got)
 	}
 }

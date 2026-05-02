@@ -25,6 +25,155 @@ func newRateLimitError() *github.RateLimitError {
 	}
 }
 
+// repoWithScoredPasses builds a RepoResult passing exactly `passing` of the
+// 5 scored rules (the first `passing` of ScoredRules in importance order).
+// Helper for Score / BucketOf tests; no-op for additional rules.
+func repoWithScoredPasses(name string, passing int) RepoResult {
+	rr := RepoResult{RepoName: name}
+	scored := ScoredRules()
+	for i, r := range scored {
+		rr.Results = append(rr.Results, RuleResult{
+			RuleName: r.Name(),
+			Passed:   i < passing,
+		})
+	}
+	return rr
+}
+
+func TestScore_AverageOfScoredRulePassRates(t *testing.T) {
+	// repoWithScoredPasses passes the FIRST n scored rules. With 4 repos
+	// passing 5, 4, 3, 2 rules respectively, each rule's pass rate is:
+	//   rule 0: 4/4 = 100%   (all 4 repos pass it)
+	//   rule 1: 4/4 = 100%
+	//   rule 2: 3/4 =  75%
+	//   rule 3: 2/4 =  50%
+	//   rule 4: 1/4 =  25%
+	// Average = (100+100+75+50+25)/5 = 70
+	sr := ScanResult{
+		Results: []RepoResult{
+			repoWithScoredPasses("a", 5),
+			repoWithScoredPasses("b", 4),
+			repoWithScoredPasses("c", 3),
+			repoWithScoredPasses("d", 2),
+		},
+	}
+	score, defined := Score(sr)
+	if !defined {
+		t.Fatal("expected score to be defined")
+	}
+	if score != 70 {
+		t.Errorf("expected score=70, got %d", score)
+	}
+}
+
+func TestScore_RoundsDown(t *testing.T) {
+	// 3 repos, each passing 1 different scored rule:
+	//   rule 0: 1/3 = 33%
+	//   rules 1-4: 0/3 = 0%
+	// Average = 33/5 = 6.6 → 6 (integer division rounds toward zero)
+	a := RepoResult{RepoName: "a"}
+	b := RepoResult{RepoName: "b"}
+	c := RepoResult{RepoName: "c"}
+	for i, r := range ScoredRules() {
+		a.Results = append(a.Results, RuleResult{RuleName: r.Name(), Passed: i == 0})
+		b.Results = append(b.Results, RuleResult{RuleName: r.Name(), Passed: false})
+		c.Results = append(c.Results, RuleResult{RuleName: r.Name(), Passed: false})
+	}
+	score, _ := Score(ScanResult{Results: []RepoResult{a, b, c}})
+	if score != 6 {
+		t.Errorf("expected score=6 (rounded down), got %d", score)
+	}
+}
+
+func TestScore_NotDefinedWhenNoRepos(t *testing.T) {
+	score, defined := Score(ScanResult{})
+	if defined {
+		t.Errorf("expected score not defined for empty ScanResult; got score=%d", score)
+	}
+}
+
+func TestScore_OnlyScoredRulesContribute(t *testing.T) {
+	// A repo passing 5/5 additional checks but 0/5 scored should yield score=0.
+	rr := RepoResult{RepoName: "a"}
+	for _, r := range ScoredRules() {
+		rr.Results = append(rr.Results, RuleResult{RuleName: r.Name(), Passed: false})
+	}
+	for _, r := range AdditionalRules() {
+		rr.Results = append(rr.Results, RuleResult{RuleName: r.Name(), Passed: true})
+	}
+	sr := ScanResult{Results: []RepoResult{rr}}
+	score, defined := Score(sr)
+	if !defined {
+		t.Fatal("expected score to be defined")
+	}
+	if score != 0 {
+		t.Errorf("expected score=0 (only scored rules contribute), got %d", score)
+	}
+}
+
+func TestBucketOf_ByPassingCount(t *testing.T) {
+	cases := []struct {
+		passing      int
+		wantName     string
+		wantPct      int
+	}{
+		{0, "Weak", 0},
+		{1, "Weak", 20},
+		{2, "Moderate", 40},
+		{3, "Moderate", 60},
+		{4, "Strong", 80},
+		{5, "Strong", 100},
+	}
+	for _, tc := range cases {
+		bucket, scoredPassing, scoredTotal, scorePct := BucketOf(repoWithScoredPasses("r", tc.passing))
+		if bucket.Name != tc.wantName {
+			t.Errorf("passing=%d: expected bucket=%s, got %s", tc.passing, tc.wantName, bucket.Name)
+		}
+		if scoredPassing != tc.passing {
+			t.Errorf("passing=%d: expected scoredPassing=%d, got %d", tc.passing, tc.passing, scoredPassing)
+		}
+		if scoredTotal != 5 {
+			t.Errorf("passing=%d: expected scoredTotal=5, got %d", tc.passing, scoredTotal)
+		}
+		if scorePct != tc.wantPct {
+			t.Errorf("passing=%d: expected scorePct=%d, got %d", tc.passing, tc.wantPct, scorePct)
+		}
+	}
+}
+
+func TestBuckets_Definition(t *testing.T) {
+	got := Buckets()
+	want := []Bucket{
+		{Name: "Strong", MinPct: 80, MaxPct: 100},
+		{Name: "Moderate", MinPct: 40, MaxPct: 79},
+		{Name: "Weak", MinPct: 0, MaxPct: 39},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("expected %d buckets, got %d", len(want), len(got))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("bucket[%d] = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+}
+
+func TestBuckets_CoverFullRange(t *testing.T) {
+	// Every percentage from 0..100 should be classified by exactly one bucket.
+	defs := Buckets()
+	for pct := 0; pct <= 100; pct++ {
+		matches := 0
+		for _, def := range defs {
+			if pct >= def.MinPct && pct <= def.MaxPct {
+				matches++
+			}
+		}
+		if matches != 1 {
+			t.Errorf("pct=%d matched %d buckets, want exactly 1", pct, matches)
+		}
+	}
+}
+
 // allResults concatenates the scanned + skipped repos from a ScanResult,
 // sorted alphabetically by repo name. Convenient for tests that don't care
 // about the scanned/skipped distinction and just want to assert against a
@@ -189,12 +338,24 @@ func TestScan_EvaluatesRulesPerRepo(t *testing.T) {
 		t.Fatalf("expected with-desc second, got %s", withDesc.RepoName)
 	}
 
-	if noDesc.Results[0].Passed {
-		t.Errorf("expected no-desc to fail 'Has repo description'")
+	// Look up "Has repo description" by name rather than positional index.
+	// The position depends on AllRules order, which can change.
+	if got := ruleResult(noDesc, "Has repo description"); got == nil || got.Passed {
+		t.Errorf("expected no-desc to fail 'Has repo description'; got %v", got)
 	}
-	if !withDesc.Results[0].Passed {
-		t.Errorf("expected with-desc to pass 'Has repo description'")
+	if got := ruleResult(withDesc, "Has repo description"); got == nil || !got.Passed {
+		t.Errorf("expected with-desc to pass 'Has repo description'; got %v", got)
 	}
+}
+
+// ruleResult looks up a rule's result by name in a RepoResult.
+func ruleResult(rr RepoResult, ruleName string) *RuleResult {
+	for i := range rr.Results {
+		if rr.Results[i].RuleName == ruleName {
+			return &rr.Results[i]
+		}
+	}
+	return nil
 }
 
 func TestScan_PropagatesClientError(t *testing.T) {

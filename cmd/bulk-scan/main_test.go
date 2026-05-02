@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -41,14 +42,14 @@ func TestReadOrgs_FileNotFound(t *testing.T) {
 	}
 }
 
-// passingResults builds n RepoResult entries each with the same rule pass/fail.
-// Used to make compliance/aggregation arithmetic obvious in tests.
+// makeRepo builds a RepoResult that includes a result for every rule in
+// scanner.AllRules. Rules absent from perRule default to passing - keeps
+// test setup terse for cases that only care about a handful of failures.
 func makeRepo(name string, perRule map[string]bool) scanner.RepoResult {
 	rr := scanner.RepoResult{RepoName: name}
 	for _, r := range scanner.AllRules() {
 		passed, ok := perRule[r.Name()]
 		if !ok {
-			// Default to pass for rules not listed - keeps test data terse.
 			passed = true
 		}
 		rr.Results = append(rr.Results, scanner.RuleResult{RuleName: r.Name(), Passed: passed})
@@ -56,127 +57,106 @@ func makeRepo(name string, perRule map[string]bool) scanner.RepoResult {
 	return rr
 }
 
-func TestComputeCompliance(t *testing.T) {
-	tests := []struct {
-		name       string
-		results    []scanner.RepoResult
-		wantPct    int
-		wantFullyC int
-	}{
-		{
-			name:       "empty",
-			results:    nil,
-			wantPct:    0,
-			wantFullyC: 0,
-		},
-		{
-			name: "all compliant",
-			results: []scanner.RepoResult{
-				makeRepo("a", nil),
-				makeRepo("b", nil),
-			},
-			wantPct:    100,
-			wantFullyC: 2,
-		},
-		{
-			name: "none compliant",
-			results: []scanner.RepoResult{
-				makeRepo("a", map[string]bool{"Has activity": false}),
-				makeRepo("b", map[string]bool{"Has activity": false}),
-			},
-			wantPct:    0,
-			wantFullyC: 0,
-		},
-		{
-			name: "half compliant rounds down",
-			results: []scanner.RepoResult{
-				makeRepo("a", nil), // compliant
-				makeRepo("b", map[string]bool{"Has activity": false}),
-				makeRepo("c", nil), // compliant
-			},
-			wantPct:    66, // 2/3 = 66.66 -> 66 (integer division)
-			wantFullyC: 2,
-		},
+func TestBucketCountsFor(t *testing.T) {
+	// Construct repos with different scored-rule pass counts:
+	//   2 strong repos (5 and 4 passing)
+	//   2 moderate (3 and 2 passing)
+	//   3 weak (1, 1, 0 passing)
+	results := []scanner.RepoResult{
+		repoWithScoredPasses("a", 5),
+		repoWithScoredPasses("b", 4),
+		repoWithScoredPasses("c", 3),
+		repoWithScoredPasses("d", 2),
+		repoWithScoredPasses("e", 1),
+		repoWithScoredPasses("f", 1),
+		repoWithScoredPasses("g", 0),
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			pct, fc := computeCompliance(scanner.ScanResult{Results: tt.results})
-			if pct != tt.wantPct {
-				t.Errorf("pct = %d, want %d", pct, tt.wantPct)
-			}
-			if fc != tt.wantFullyC {
-				t.Errorf("fullyCompliant = %d, want %d", fc, tt.wantFullyC)
-			}
-		})
+	got := bucketCountsFor(results)
+	if got.Strong != 2 {
+		t.Errorf("Strong = %d, want 2", got.Strong)
+	}
+	if got.Moderate != 2 {
+		t.Errorf("Moderate = %d, want 2", got.Moderate)
+	}
+	if got.Weak != 3 {
+		t.Errorf("Weak = %d, want 3", got.Weak)
 	}
 }
 
-func TestAggregateRules(t *testing.T) {
+func TestAggregate_KeyedAndOrderedByInputRules(t *testing.T) {
+	// Use scored rules in their importance order; verify the returned
+	// orderedRuleAggregates preserves that order regardless of how it
+	// would marshal alphabetically.
 	results := []scanner.RepoResult{
 		makeRepo("a", map[string]bool{
-			"Has SECURITY.md":         false,
-			"Has CODEOWNERS":          false,
-			"Has branch protection":   false,
+			"Has branch protection":                 false,
+			"Has required reviewers":                false,
+			"Requires status checks before merging": false,
 		}),
 		makeRepo("b", map[string]bool{
-			"Has SECURITY.md": false,
-			"Has CODEOWNERS":  true,
+			"Has branch protection": false,
 		}),
 	}
 
-	got := aggregateRules(results)
-
-	// Has SECURITY.md: 0 passing, 2 failing -> 0%.
-	sec := got["has_security_md"]
-	if sec.Passing != 0 || sec.Failing != 2 || sec.PassRate != 0 {
-		t.Errorf("has_security_md = %+v, want passing=0 failing=2 pass_rate=0", sec)
+	got := aggregate(results, scanner.ScoredRules())
+	wantKeys := []string{
+		"has_branch_protection",
+		"has_required_reviewers",
+		"requires_status_checks_before_merging",
+		"has_codeowners",
+		"has_ci_workflow",
+	}
+	if len(got) != len(wantKeys) {
+		t.Fatalf("got %d entries, want %d", len(got), len(wantKeys))
+	}
+	for i, k := range wantKeys {
+		if got[i].Key != k {
+			t.Errorf("entry %d: key = %q, want %q", i, got[i].Key, k)
+		}
 	}
 
-	// Has CODEOWNERS: 1 passing, 1 failing -> 50%.
-	cow := got["has_codeowners"]
-	if cow.Passing != 1 || cow.Failing != 1 || cow.PassRate != 50 {
-		t.Errorf("has_codeowners = %+v, want passing=1 failing=1 pass_rate=50", cow)
+	// Spot-check counts: branch_protection has 0 passing 2 failing -> 0%.
+	bp := got[0].Value
+	if bp.Passing != 0 || bp.Failing != 2 || bp.PassRate != 0 {
+		t.Errorf("has_branch_protection = %+v, want passing=0 failing=2 pass_rate=0", bp)
 	}
-
-	// Has branch protection: 1 passing (default), 1 failing -> 50%.
-	bp := got["has_branch_protection"]
-	if bp.Passing != 1 || bp.Failing != 1 || bp.PassRate != 50 {
-		t.Errorf("has_branch_protection = %+v, want passing=1 failing=1 pass_rate=50", bp)
-	}
-
-	// Rule with all passes (e.g., Has activity, default true).
-	act := got["has_activity"]
-	if act.Passing != 2 || act.Failing != 0 || act.PassRate != 100 {
-		t.Errorf("has_activity = %+v, want passing=2 failing=0 pass_rate=100", act)
-	}
-}
-
-func TestAggregateRules_IgnoresUnknownRuleNames(t *testing.T) {
-	results := []scanner.RepoResult{
-		{RepoName: "a", Results: []scanner.RuleResult{
-			{RuleName: "Made-up rule", Passed: true},
-			{RuleName: "Has activity", Passed: true},
-		}},
-	}
-
-	got := aggregateRules(results)
-
-	if _, exists := got["made_up_rule"]; exists {
-		t.Errorf("expected unknown rule to be omitted from aggregate; got: %+v", got)
-	}
-	if act, ok := got["has_activity"]; !ok || act.Passing != 1 {
-		t.Errorf("expected has_activity passing=1; got: %+v", got)
+	// has_codeowners is true by default in makeRepo: 2 passing.
+	co := got[3].Value
+	if co.Passing != 2 || co.Failing != 0 || co.PassRate != 100 {
+		t.Errorf("has_codeowners = %+v, want passing=2 failing=0 pass_rate=100", co)
 	}
 }
 
-func TestBuildStats_ProducesExpectedJSONKeys(t *testing.T) {
+func TestOrderedRuleAggregates_PreservesInsertionOrder(t *testing.T) {
+	o := orderedRuleAggregates{
+		{Key: "z_first", Value: ruleAggregate{Passing: 1, Failing: 0, PassRate: 100}},
+		{Key: "a_second", Value: ruleAggregate{Passing: 0, Failing: 1, PassRate: 0}},
+		{Key: "m_third", Value: ruleAggregate{Passing: 1, Failing: 1, PassRate: 50}},
+	}
+	blob, err := json.Marshal(o)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	zIdx := strings.Index(string(blob), "z_first")
+	aIdx := strings.Index(string(blob), "a_second")
+	mIdx := strings.Index(string(blob), "m_third")
+	if zIdx == -1 || aIdx == -1 || mIdx == -1 {
+		t.Fatalf("missing keys in JSON: %s", blob)
+	}
+	if !(zIdx < aIdx && aIdx < mIdx) {
+		t.Errorf("keys not in insertion order: %s", blob)
+	}
+}
+
+func TestBuildStats_NewShape(t *testing.T) {
 	older := mustParseTime(t, "2026-04-15T12:00:00Z")
 	newer := mustParseTime(t, "2026-04-29T12:00:00Z")
-	a := makeRepo("a", nil)
+
+	a := repoWithScoredPasses("a", 5) // strong
 	a.MostRecentCommit = older
-	b := makeRepo("b", nil)
+	b := repoWithScoredPasses("b", 3) // moderate
 	b.MostRecentCommit = newer
-	c := makeRepo("c", map[string]bool{"Has activity": false})
+	c := repoWithScoredPasses("c", 0) // weak
 	c.MostRecentCommit = older
 
 	sr := scanner.ScanResult{
@@ -190,7 +170,6 @@ func TestBuildStats_ProducesExpectedJSONKeys(t *testing.T) {
 
 	got := buildStats(sr)
 
-	// Marshal and unmarshal into a generic map to verify JSON keys.
 	blob, err := json.Marshal(got)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
@@ -200,53 +179,107 @@ func TestBuildStats_ProducesExpectedJSONKeys(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 
+	// Every documented top-level key must be present (and old keys absent).
 	wantTopLevel := []string{
 		"org", "scanned_at", "total_public_repos", "forks_excluded",
-		"archived_excluded", "repos_scanned", "compliance_percentage",
-		"fully_compliant_count", "non_compliant_count", "rule_results",
-		"most_recent_commit",
+		"archived_excluded", "repos_scanned", "score", "repo_buckets",
+		"scored_rules", "additional_checks", "most_recent_commit",
 	}
 	for _, key := range wantTopLevel {
 		if _, ok := asMap[key]; !ok {
-			t.Errorf("missing top-level JSON key %q in: %s", key, blob)
+			t.Errorf("missing top-level JSON key %q", key)
+		}
+	}
+	for _, deprecated := range []string{"compliance_percentage", "fully_compliant_count", "non_compliant_count", "rule_results"} {
+		if _, ok := asMap[deprecated]; ok {
+			t.Errorf("expected deprecated key %q to be absent in new shape", deprecated)
 		}
 	}
 
-	// Spot-check field values to guarantee correct mapping.
+	// Spot-check field values.
 	if got.Org != "acme-corp" {
 		t.Errorf("Org = %q, want acme-corp", got.Org)
-	}
-	if got.TotalPublicRepos != 32 {
-		t.Errorf("TotalPublicRepos = %d, want 32", got.TotalPublicRepos)
-	}
-	if got.ForksExcluded != 4 {
-		t.Errorf("ForksExcluded = %d, want 4", got.ForksExcluded)
-	}
-	if got.ArchivedExcluded != 2 {
-		t.Errorf("ArchivedExcluded = %d, want 2", got.ArchivedExcluded)
 	}
 	if got.ReposScanned != 3 {
 		t.Errorf("ReposScanned = %d, want 3", got.ReposScanned)
 	}
-	if got.FullyCompliantCount != 2 {
-		t.Errorf("FullyCompliantCount = %d, want 2", got.FullyCompliantCount)
+	if got.RepoBuckets.Strong != 1 {
+		t.Errorf("Strong = %d, want 1", got.RepoBuckets.Strong)
 	}
-	if got.NonCompliantCount != 1 {
-		t.Errorf("NonCompliantCount = %d, want 1", got.NonCompliantCount)
+	if got.RepoBuckets.Moderate != 1 {
+		t.Errorf("Moderate = %d, want 1", got.RepoBuckets.Moderate)
+	}
+	if got.RepoBuckets.Weak != 1 {
+		t.Errorf("Weak = %d, want 1", got.RepoBuckets.Weak)
 	}
 	if got.MostRecentCommit != "2026-04-29" {
 		t.Errorf("MostRecentCommit = %q, want 2026-04-29", got.MostRecentCommit)
 	}
 
-	// Verify rule_results uses snake_case JSON keys.
-	ruleResults, ok := asMap["rule_results"].(map[string]any)
-	if !ok {
-		t.Fatalf("rule_results not an object: %v", asMap["rule_results"])
+	// Score is a *int, not nil for a non-empty scan.
+	if got.Score == nil {
+		t.Error("expected Score to be non-nil for non-empty results")
 	}
-	for _, r := range scanner.AllRules() {
-		if _, ok := ruleResults[jsonKey(r.Name())]; !ok {
-			t.Errorf("rule_results missing key %q (rule %q)", jsonKey(r.Name()), r.Name())
+
+	// scored_rules must contain the 5 scored keys in importance order.
+	wantScoredOrder := []string{
+		"has_branch_protection",
+		"has_required_reviewers",
+		"requires_status_checks_before_merging",
+		"has_codeowners",
+		"has_ci_workflow",
+	}
+	prev := -1
+	for _, k := range wantScoredOrder {
+		idx := strings.Index(string(blob), `"`+k+`"`)
+		if idx == -1 {
+			t.Errorf("scored_rules missing key %q in JSON", k)
+			continue
 		}
+		if idx <= prev {
+			t.Errorf("scored_rules key %q out of importance order in JSON", k)
+		}
+		prev = idx
+	}
+
+	// additional_checks must contain the 5 additional keys in importance order.
+	wantAdditionalOrder := []string{
+		"has_readme",
+		"has_license",
+		"has_repo_description",
+		"has_activity",
+		"has_security_md",
+	}
+	prev = strings.Index(string(blob), `"additional_checks"`)
+	for _, k := range wantAdditionalOrder {
+		idx := strings.Index(string(blob), `"`+k+`"`)
+		if idx == -1 {
+			t.Errorf("additional_checks missing key %q in JSON", k)
+			continue
+		}
+		if idx <= prev {
+			t.Errorf("additional_checks key %q out of importance order in JSON", k)
+		}
+		prev = idx
+	}
+}
+
+func TestBuildStats_ScoreNullWhenNoRepos(t *testing.T) {
+	sr := scanner.ScanResult{
+		Org:       "empty-org",
+		ScannedAt: mustParseTime(t, "2026-04-30T10:15:00Z"),
+	}
+	got := buildStats(sr)
+	if got.Score != nil {
+		t.Errorf("expected Score=nil for empty results, got %v", *got.Score)
+	}
+
+	blob, err := json.Marshal(got)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(blob), `"score":null`) {
+		t.Errorf("expected JSON to contain `\"score\":null`; got: %s", blob)
 	}
 }
 
@@ -256,11 +289,10 @@ func TestJSONKey_DerivesSnakeCaseFromRuleName(t *testing.T) {
 		want string
 	}{
 		{"Has repo description", "has_repo_description"},
-		{"Has substantial README", "has_substantial_readme"},
+		{"Has README", "has_readme"},
 		{"Has LICENSE", "has_license"},
 		{"Has SECURITY.md", "has_security_md"},
 		{"Has CI workflow", "has_ci_workflow"},
-		{"Has test directory", "has_test_directory"},
 		{"Has CODEOWNERS", "has_codeowners"},
 		{"Has branch protection", "has_branch_protection"},
 		{"Has required reviewers", "has_required_reviewers"},
@@ -292,13 +324,10 @@ func TestJSONKey_KeysAreUniqueAcrossAllRules(t *testing.T) {
 }
 
 func TestBuildStats_EmptyMostRecentCommit(t *testing.T) {
-	// No Results / no Skipped -> no per-repo MostRecentCommit values to
-	// aggregate, so the JSON field should be the empty string.
 	sr := scanner.ScanResult{
 		Org:       "empty-org",
 		ScannedAt: mustParseTime(t, "2026-04-30T10:15:00Z"),
 	}
-
 	got := buildStats(sr)
 	if got.MostRecentCommit != "" {
 		t.Errorf("expected empty MostRecentCommit when no repos; got %q", got.MostRecentCommit)
@@ -311,9 +340,7 @@ func TestWriteOrgOutput_WritesBothFiles(t *testing.T) {
 		Org:        "acme-corp",
 		ScannedAt:  mustParseTime(t, "2026-04-30T10:15:00Z"),
 		TotalRepos: 1,
-		Results: []scanner.RepoResult{
-			makeRepo("a", nil),
-		},
+		Results:    []scanner.RepoResult{repoWithScoredPasses("a", 5)},
 	}
 
 	if err := writeOrgOutput(dir, sr); err != nil {
@@ -329,7 +356,6 @@ func TestWriteOrgOutput_WritesBothFiles(t *testing.T) {
 		t.Errorf("stats.json missing at %s: %v", jsonPath, err)
 	}
 
-	// stats.json must be valid JSON with the expected top-level keys.
 	blob, err := os.ReadFile(jsonPath)
 	if err != nil {
 		t.Fatalf("read stats.json: %v", err)
@@ -341,6 +367,21 @@ func TestWriteOrgOutput_WritesBothFiles(t *testing.T) {
 	if asMap["org"] != "acme-corp" {
 		t.Errorf("stats.json org = %v, want acme-corp", asMap["org"])
 	}
+}
+
+// repoWithScoredPasses builds a RepoResult passing the FIRST `passing`
+// scored rules in importance order, and failing the rest. Additional
+// rules are not included - tests using this helper care only about
+// score / bucket math.
+func repoWithScoredPasses(name string, passing int) scanner.RepoResult {
+	rr := scanner.RepoResult{RepoName: name}
+	for i, r := range scanner.ScoredRules() {
+		rr.Results = append(rr.Results, scanner.RuleResult{
+			RuleName: r.Name(),
+			Passed:   i < passing,
+		})
+	}
+	return rr
 }
 
 func mustParseTime(t *testing.T, s string) time.Time {
