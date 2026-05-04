@@ -35,7 +35,7 @@ func TestGenerateReport_StrongAndWeakBuckets(t *testing.T) {
 
 	got := GenerateReport(withDefaultRules(sr))
 
-	want := `# Codatus - Engineering Standards Scorecard
+	want := `# Codatus - Repo Standards Scorecard
 
 **Org:** test-org<br>
 **Scanned:** 2026-04-05 12:00 UTC<br>
@@ -162,7 +162,7 @@ func TestGenerateReport_EmptyResults(t *testing.T) {
 	sr := ScanResult{Org: "empty-org", ScannedAt: testTime}
 	got := GenerateReport(withDefaultRules(sr))
 
-	want := `# Codatus - Engineering Standards Scorecard
+	want := `# Codatus - Repo Standards Scorecard
 
 **Org:** empty-org<br>
 **Scanned:** 2026-04-05 12:00 UTC<br>
