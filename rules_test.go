@@ -113,37 +113,49 @@ func TestHasReadme_Fail_Missing(t *testing.T) {
 	}
 }
 
-func TestHasReadme_Fail_LowercaseNotAccepted(t *testing.T) {
+func TestHasReadme_Pass_VariousCasesAndExtensions(t *testing.T) {
 	rule := HasReadme{}
 
-	// Case-sensitive check - lowercase variants do not pass. If this becomes
-	// a problem in real scans, widening is a separate change.
-	if rule.Check(Repo{Files: []FileEntry{{Path: "readme.md"}}}) {
-		t.Error("expected fail for lowercase readme.md (case-sensitive check)")
+	// Wildcard match: case-insensitive, any extension or none.
+	for _, name := range []string{"readme.md", "Readme.md", "README.rst", "README.txt", "README.markdown", "readme"} {
+		if !rule.Check(Repo{Files: []FileEntry{{Path: name}}}) {
+			t.Errorf("expected pass for %q", name)
+		}
 	}
 }
 
-func TestHasLicense_Pass_LICENSE(t *testing.T) {
-	rule := HasLicense{}
+func TestHasReadme_Fail_NestedReadmeOnly(t *testing.T) {
+	rule := HasReadme{}
 
-	if !rule.Check(Repo{Files: []FileEntry{{Path: "LICENSE"}}}) {
-		t.Error("expected pass when LICENSE exists")
+	// READMEs in subdirectories don't count as the project README.
+	if rule.Check(Repo{Files: []FileEntry{{Path: "docs/README.md"}}}) {
+		t.Error("expected fail for nested README only (root README is required)")
 	}
 }
 
-func TestHasLicense_Pass_LICENSEmd(t *testing.T) {
-	rule := HasLicense{}
+func TestHasReadme_Fail_NameStartsWithReadmeButIsnt(t *testing.T) {
+	rule := HasReadme{}
 
-	if !rule.Check(Repo{Files: []FileEntry{{Path: "LICENSE.md"}}}) {
-		t.Error("expected pass when LICENSE.md exists")
+	if rule.Check(Repo{Files: []FileEntry{{Path: "READMEv2-stuff"}}}) {
+		t.Error("expected fail for filenames that start with `readme` but aren't `readme` or `readme.<ext>`")
 	}
 }
 
-func TestHasLicense_Fail(t *testing.T) {
+func TestHasLicense_Pass_FromMetadata(t *testing.T) {
 	rule := HasLicense{}
 
-	if rule.Check(Repo{Files: []FileEntry{{Path: "README.md"}}}) {
-		t.Error("expected fail when no LICENSE file exists")
+	// HasLicense reads repo.License (GitHub-auto-detected SPDX id),
+	// regardless of which file produced it - no file-tree match.
+	if !rule.Check(Repo{License: "MIT"}) {
+		t.Error("expected pass when repo.License is set")
+	}
+}
+
+func TestHasLicense_Fail_NoLicenseDetected(t *testing.T) {
+	rule := HasLicense{}
+
+	if rule.Check(Repo{Files: []FileEntry{{Path: "LICENSE"}}}) {
+		t.Error("expected fail when license file exists but GitHub didn't auto-detect it (License field empty)")
 	}
 }
 
@@ -160,6 +172,14 @@ func TestHasSecurityMd_Pass_GitHub(t *testing.T) {
 
 	if !rule.Check(Repo{Files: []FileEntry{{Path: ".github/SECURITY.md"}}}) {
 		t.Error("expected pass when .github/SECURITY.md exists")
+	}
+}
+
+func TestHasSecurityMd_Pass_Docs(t *testing.T) {
+	rule := HasSecurityMd{}
+
+	if !rule.Check(Repo{Files: []FileEntry{{Path: "docs/SECURITY.md"}}}) {
+		t.Error("expected pass when docs/SECURITY.md exists")
 	}
 }
 
@@ -200,6 +220,26 @@ func TestHasCIWorkflow_Fail_WrongExtension(t *testing.T) {
 
 	if rule.Check(Repo{Files: []FileEntry{{Path: ".github/workflows/README.md"}}}) {
 		t.Error("expected fail for non-yaml file in workflows")
+	}
+}
+
+func TestHasCIWorkflow_Pass_OtherProviders(t *testing.T) {
+	rule := HasCIWorkflow{}
+	cases := []struct {
+		name string
+		path string
+	}{
+		{"CircleCI", ".circleci/config.yml"},
+		{"GitLab CI", ".gitlab-ci.yml"},
+		{"Travis CI", ".travis.yml"},
+		{"Buildkite (any file under .buildkite/)", ".buildkite/pipelines/main.yml"},
+		{"Azure Pipelines", "azure-pipelines.yml"},
+		{"Jenkins", "Jenkinsfile"},
+	}
+	for _, tc := range cases {
+		if !rule.Check(Repo{Files: []FileEntry{{Path: tc.path}}}) {
+			t.Errorf("expected pass for %s (%s)", tc.name, tc.path)
+		}
 	}
 }
 

@@ -65,23 +65,38 @@ type ScanResult struct {
 	ForksExcluded    int          // forked repos filtered out at listing time
 	Skipped          []RepoResult // empty repos, truncated trees, or unexpected errors during the scan
 	Results          []RepoResult // repos that finished scanning (success or fail per-rule)
+
+	// RulesScored and RulesAdditional are the rules actually run against
+	// each repo, split by category. They reflect WithAdmin filtering: an
+	// admin-only rule skipped on a non-admin scan does NOT appear here,
+	// so all downstream math (Score, BucketOf, table aggregation) is
+	// driven directly by these slices instead of inferring evaluated
+	// rules from RepoResult.Results.
+	//
+	// JSON-tagged "-" because Rule is an interface and consumers that
+	// marshal a ScanResult should instead build their own per-rule
+	// payload (see cmd/bulk-scan for an example). The fields are stable
+	// for in-process use only.
+	RulesScored     []Rule `json:"-"`
+	RulesAdditional []Rule `json:"-"`
 }
 
 // Score computes the org-level score: the arithmetic mean of pass rates
-// across the scored rules in sr.Results. Returns the score (0-100) and a
-// flag indicating whether it's defined. When sr has no scanned repos,
-// defined=false and the caller should render "N/A". Result is rounded
-// to the nearest integer for display.
+// across sr.RulesScored. Returns the score (0-100) and a flag indicating
+// whether it's defined. When sr has no scanned repos OR no scored rules
+// were evaluated (e.g., a non-admin scan with admin-only rules filtered
+// out and no scored rules left), defined=false and the caller should
+// render "N/A". Result is rounded to the nearest integer for display.
+//
+// The denominator is len(sr.RulesScored), not the size of the global
+// scored-rule set - that's how non-admin scans get the math right
+// without rules they couldn't evaluate dragging the score down.
 func Score(sr ScanResult) (score int, defined bool) {
-	if len(sr.Results) == 0 {
-		return 0, false
-	}
-	scored := ScoredRules()
-	if len(scored) == 0 {
+	if len(sr.Results) == 0 || len(sr.RulesScored) == 0 {
 		return 0, false
 	}
 	totalPassRate := 0
-	for _, rule := range scored {
+	for _, rule := range sr.RulesScored {
 		passing := 0
 		for _, rr := range sr.Results {
 			for _, res := range rr.Results {
@@ -93,7 +108,7 @@ func Score(sr ScanResult) (score int, defined bool) {
 		}
 		totalPassRate += passing * 100 / len(sr.Results)
 	}
-	return totalPassRate / len(scored), true
+	return totalPassRate / len(sr.RulesScored), true
 }
 
 // Bucket classifies a repo by what fraction of the scored rules it passes.
@@ -113,31 +128,35 @@ type Bucket struct {
 func Buckets() []Bucket {
 	return []Bucket{
 		{Name: "Strong", MinPct: 80, MaxPct: 100},
-		{Name: "Moderate", MinPct: 40, MaxPct: 79},
-		{Name: "Weak", MinPct: 0, MaxPct: 39},
+		{Name: "Moderate", MinPct: 30, MaxPct: 79},
+		{Name: "Weak", MinPct: 0, MaxPct: 29},
 	}
 }
 
 // BucketOf classifies a single repo by the percentage of scored rules it
-// passes. Returns the matching Bucket plus the underlying counts so callers
-// don't re-derive them. If there are zero scored rules the result is the
-// last-defined bucket (i.e. Weak) with zero counts; this only happens in
-// test fixtures with no scored rules registered.
-func BucketOf(rr RepoResult) (b Bucket, scoredPassing, scoredTotal, scorePct int) {
-	scored := ScoredRules()
-	scoredTotal = len(scored)
+// passes. The caller passes the scored-rule set so the denominator is
+// stable across the org's scan: every repo gets the same denominator,
+// regardless of which rules happen to appear in any one repo's results.
+// Pass sr.RulesScored from the parent ScanResult.
+//
+// Returns the matching Bucket plus the underlying counts so callers
+// don't re-derive them. If scoredRules is empty the result is the
+// last-defined bucket (i.e. Weak) with zero counts; this only happens
+// in test fixtures with no scored rules registered.
+func BucketOf(rr RepoResult, scoredRules []Rule) (b Bucket, scoredPassing, scoredTotal, scorePct int) {
+	scoredTotal = len(scoredRules)
+	defs := Buckets()
+	if scoredTotal == 0 {
+		return defs[len(defs)-1], 0, 0, 0
+	}
 	scoredNames := make(map[string]bool, scoredTotal)
-	for _, r := range scored {
+	for _, r := range scoredRules {
 		scoredNames[r.Name()] = true
 	}
 	for _, res := range rr.Results {
 		if scoredNames[res.RuleName] && res.Passed {
 			scoredPassing++
 		}
-	}
-	defs := Buckets()
-	if scoredTotal == 0 {
-		return defs[len(defs)-1], 0, 0, 0
 	}
 	scorePct = scoredPassing * 100 / scoredTotal
 	for _, def := range defs {
@@ -151,6 +170,7 @@ func BucketOf(rr RepoResult) (b Bucket, scoredPassing, scoredTotal, scorePct int
 // scanOptions holds optional parameters configurable via functional options.
 type scanOptions struct {
 	baseURL string
+	admin   bool
 }
 
 // Option configures optional scan behavior.
@@ -161,6 +181,59 @@ type Option func(*scanOptions)
 // a mock server or pointing at a GitHub Enterprise instance.
 func WithBaseURL(url string) Option {
 	return func(o *scanOptions) { o.baseURL = url }
+}
+
+// WithAdmin signals that the auth has admin access on every repo it can
+// see. When true, the scanner runs all rules, including those that need
+// admin-only API endpoints (currently: required-reviewers visibility on
+// classic per-repo branch protection). When false (the default), rules
+// marked admin-only are silently skipped - they don't appear in the
+// per-repo results, the JSON output, or the Markdown report. Their
+// absence is invisible to downstream consumers, who simply don't see
+// those keys/columns.
+//
+// Pass true when scanning with an installation token issued by the
+// Codatus GitHub App (which is granted admin) or a PAT belonging to an
+// admin of every target org. Pass false (or leave default) for
+// third-party / public scans where admin signals can't be read.
+func WithAdmin(b bool) Option {
+	return func(o *scanOptions) { o.admin = b }
+}
+
+// adminRequiringRule is the optional interface a Rule can implement to
+// signal that it depends on admin-only API responses. Rules that don't
+// implement it are treated as admin-not-required (the default for every
+// existing rule except HasRequiredReviewers).
+type adminRequiringRule interface {
+	RequiresAdmin() bool
+}
+
+// ruleRequiresAdmin reports whether a rule needs admin access. Uses a
+// type assertion against adminRequiringRule so adding the requirement
+// is a per-rule opt-in - new rules don't have to change the Rule
+// interface to declare they're public-safe.
+func ruleRequiresAdmin(r Rule) bool {
+	if ar, ok := r.(adminRequiringRule); ok {
+		return ar.RequiresAdmin()
+	}
+	return false
+}
+
+// effectiveRules returns AllRules filtered for the admin context. Public
+// scans drop admin-only rules so they don't run, don't produce results,
+// and don't appear anywhere downstream.
+func effectiveRules(admin bool) []Rule {
+	all := AllRules()
+	if admin {
+		return all
+	}
+	out := make([]Rule, 0, len(all))
+	for _, r := range all {
+		if !ruleRequiresAdmin(r) {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // Scan lists repositories accessible to auth and evaluates every rule
@@ -184,7 +257,46 @@ func Scan(ctx context.Context, auth Auth, opts ...Option) (ScanResult, error) {
 	}
 
 	client := newGitHubClient(token, o.baseURL)
-	return scanWithClient(ctx, client, auth)
+	return scanWithClient(ctx, client, auth, o)
+}
+
+// resolveBranchProtection asks the client for branch-protection details
+// from three different APIs in priority order, returning the first
+// non-nil response. The order matters because each source covers a
+// different population of repos:
+//
+//  1. Rulesets - publicly readable; richest signal when the org has
+//     migrated to GitHub's modern rulesets feature.
+//  2. Classic per-repo protection - admin-only; richest signal for
+//     orgs still on Settings > Branches rules. Returns nil to non-admin
+//     tokens (404), so non-admin scans skip past it.
+//  3. Public branch info - publicly readable; partial signal (protected
+//     flag + required-status-check contexts, no reviewer count). Closes
+//     the gap so non-admin scans of classic-protected repos don't
+//     silently see "no protection".
+//
+// Errors from any source short-circuit and propagate to the caller,
+// which is responsible for distinguishing rate-limit aborts from
+// per-repo skips. Errors are wrapped with the source name for clarity.
+func resolveBranchProtection(ctx context.Context, client GitHubClient, owner, repo, branch string) (*BranchProtection, error) {
+	type source struct {
+		name string
+		fn   func(context.Context, string, string, string) (*BranchProtection, error)
+	}
+	for _, src := range []source{
+		{"rulesets", client.GetRulesets},
+		{"branch protection", client.GetBranchProtection},
+		{"branch info", client.GetBranchInfo},
+	} {
+		bp, err := src.fn(ctx, owner, repo, branch)
+		if err != nil {
+			return nil, fmt.Errorf("get %s for %s/%s: %w", src.name, owner, repo, err)
+		}
+		if bp != nil {
+			return bp, nil
+		}
+	}
+	return nil, nil
 }
 
 // skipRepo converts a per-repo error into a RepoResult that records the
@@ -211,7 +323,7 @@ func skipRepo(repo Repo, err error) RepoResult {
 // scanWithClient is the internal scan loop used by both the public Scan
 // (which constructs a real client) and by tests (which pass a mock client).
 // Listing strategy depends on the auth type.
-func scanWithClient(ctx context.Context, client GitHubClient, auth Auth) (ScanResult, error) {
+func scanWithClient(ctx context.Context, client GitHubClient, auth Auth, o scanOptions) (ScanResult, error) {
 	var repos []Repo
 	var owner string
 
@@ -232,13 +344,29 @@ func scanWithClient(ctx context.Context, client GitHubClient, auth Auth) (ScanRe
 		return ScanResult{}, fmt.Errorf("unsupported auth type: %T", auth)
 	}
 
-	sr := ScanResult{
-		Org:        owner,
-		ScannedAt:  time.Now().UTC(),
-		TotalRepos: len(repos),
+	rules := effectiveRules(o.admin)
+
+	// Split the effective rule set by category once so the result
+	// carries it for downstream math. Done before the scan loop so even
+	// a zero-repo scan still describes which rules WOULD have run.
+	var rulesScored, rulesAdditional []Rule
+	for _, r := range rules {
+		switch r.Category() {
+		case CategoryScored:
+			rulesScored = append(rulesScored, r)
+		case CategoryAdditional:
+			rulesAdditional = append(rulesAdditional, r)
+		}
 	}
 
-	rules := AllRules()
+	sr := ScanResult{
+		Org:             owner,
+		ScannedAt:       time.Now().UTC(),
+		TotalRepos:      len(repos),
+		RulesScored:     rulesScored,
+		RulesAdditional: rulesAdditional,
+	}
+
 	var allResults []RepoResult
 
 	for _, repo := range repos {
@@ -261,23 +389,13 @@ func scanWithClient(ctx context.Context, client GitHubClient, auth Auth) (ScanRe
 		}
 		repo.Files = files
 
-		protection, err := client.GetRulesets(ctx, owner, repo.Name, repo.DefaultBranch)
+		protection, err := resolveBranchProtection(ctx, client, owner, repo.Name, repo.DefaultBranch)
 		if err != nil {
 			if IsRateLimitError(err) {
-				return ScanResult{}, fmt.Errorf("get rulesets for repo %s: %w", repo.Name, err)
+				return ScanResult{}, err
 			}
 			allResults = append(allResults, skipRepo(repo, err))
 			continue
-		}
-		if protection == nil {
-			protection, err = client.GetBranchProtection(ctx, owner, repo.Name, repo.DefaultBranch)
-			if err != nil {
-				if IsRateLimitError(err) {
-					return ScanResult{}, fmt.Errorf("get branch protection for repo %s: %w", repo.Name, err)
-				}
-				allResults = append(allResults, skipRepo(repo, err))
-				continue
-			}
 		}
 		repo.BranchProtection = protection
 

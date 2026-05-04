@@ -38,6 +38,7 @@ type Repo struct {
 	Archived         bool
 	Fork             bool
 	PushedAt         time.Time         // most recent push to any branch (from list-repos)
+	License          string            // SPDX id GitHub auto-detected (Licensee), "" if none
 	Files            []FileEntry       // all files and directories in the repo
 	BranchProtection *BranchProtection // nil if no protection configured
 }
@@ -54,6 +55,15 @@ type GitHubClient interface {
 	GetTree(ctx context.Context, owner, repo, branch string) ([]FileEntry, error)
 	GetBranchProtection(ctx context.Context, owner, repo, branch string) (*BranchProtection, error)
 	GetRulesets(ctx context.Context, owner, repo, branch string) (*BranchProtection, error)
+	// GetBranchInfo reads the public GET /repos/{o}/{r}/branches/{br}
+	// endpoint, which exposes the protected flag and (for classic
+	// per-repo branch protection) the required-status-check contexts to
+	// any reader - including non-admins on public repos. This is the
+	// fallback when the admin GetBranchProtection 404s and there are no
+	// rulesets, so the scanner can still tell whether protection is on
+	// and which status checks are required. Required-reviewer counts
+	// are NOT exposed here (admin-only field on classic protection).
+	GetBranchInfo(ctx context.Context, owner, repo, branch string) (*BranchProtection, error)
 }
 
 type realGitHubClient struct {
@@ -88,6 +98,27 @@ func IsRateLimitError(err error) bool {
 	return errors.As(err, &rateLimitErr) || errors.As(err, &abuseErr)
 }
 
+// repoFromGitHub builds a Repo from a go-github *Repository payload. The
+// listing response is rich (~50 fields) but the scanner needs only a
+// handful, plus GitHub's auto-detected license SPDX id (which lets the
+// HasLicense rule pass even when the file is named LICENSE.txt, COPYING,
+// LICENCE, etc. - anything Licensee recognizes).
+func repoFromGitHub(r *github.Repository) Repo {
+	license := ""
+	if r.License != nil {
+		license = r.License.GetSPDXID()
+	}
+	return Repo{
+		Name:          r.GetName(),
+		Description:   r.GetDescription(),
+		DefaultBranch: r.GetDefaultBranch(),
+		Archived:      r.GetArchived(),
+		Fork:          r.GetFork(),
+		PushedAt:      r.GetPushedAt().Time,
+		License:       license,
+	}
+}
+
 // ListReposByAccount lists repos for a named account. Tries /orgs/{name}/repos
 // first; on 404 (not an org) falls back to /users/{name}/repos.
 func (c *realGitHubClient) ListReposByAccount(ctx context.Context, name string) ([]Repo, error) {
@@ -115,14 +146,7 @@ func (c *realGitHubClient) listOrgRepos(ctx context.Context, org string) ([]Repo
 		}
 
 		for _, r := range ghRepos {
-			allRepos = append(allRepos, Repo{
-				Name:          r.GetName(),
-				Description:   r.GetDescription(),
-				DefaultBranch: r.GetDefaultBranch(),
-				Archived:      r.GetArchived(),
-				Fork:          r.GetFork(),
-				PushedAt:      r.GetPushedAt().Time,
-			})
+			allRepos = append(allRepos, repoFromGitHub(r))
 		}
 
 		if resp.NextPage == 0 {
@@ -150,14 +174,7 @@ func (c *realGitHubClient) listUserRepos(ctx context.Context, user string) ([]Re
 		}
 
 		for _, r := range ghRepos {
-			allRepos = append(allRepos, Repo{
-				Name:          r.GetName(),
-				Description:   r.GetDescription(),
-				DefaultBranch: r.GetDefaultBranch(),
-				Archived:      r.GetArchived(),
-				Fork:          r.GetFork(),
-				PushedAt:      r.GetPushedAt().Time,
-			})
+			allRepos = append(allRepos, repoFromGitHub(r))
 		}
 
 		if resp.NextPage == 0 {
@@ -186,14 +203,7 @@ func (c *realGitHubClient) ListReposByInstallation(ctx context.Context) ([]Repo,
 		}
 
 		for _, r := range result.Repositories {
-			allRepos = append(allRepos, Repo{
-				Name:          r.GetName(),
-				Description:   r.GetDescription(),
-				DefaultBranch: r.GetDefaultBranch(),
-				Archived:      r.GetArchived(),
-				Fork:          r.GetFork(),
-				PushedAt:      r.GetPushedAt().Time,
-			})
+			allRepos = append(allRepos, repoFromGitHub(r))
 		}
 
 		if resp.NextPage == 0 {
@@ -287,4 +297,39 @@ func (c *realGitHubClient) GetRulesets(ctx context.Context, owner, repo, branch 
 		return nil, nil
 	}
 	return &bp, nil
+}
+
+// GetBranchInfo calls the public GET /repos/{o}/{r}/branches/{br}
+// endpoint and pulls protection details out of the inline `protection`
+// object. This is the public fallback for non-admin scans: the admin
+// branch-protection endpoint 404s for non-admins, but this endpoint is
+// readable by anyone for public repos and exposes:
+//
+//   - protected: bool (used to populate has_branch_protection)
+//   - protection.required_status_checks.contexts: []string (used to
+//     populate has_required_status_checks)
+//
+// Returns nil when the branch isn't protected. Required-reviewer count
+// is not exposed by this endpoint - that field stays admin-only.
+func (c *realGitHubClient) GetBranchInfo(ctx context.Context, owner, repo, branch string) (*BranchProtection, error) {
+	br, resp, err := c.client.Repositories.GetBranch(ctx, owner, repo, branch, 0)
+	if err != nil {
+		if IsRateLimitError(err) {
+			return nil, err
+		}
+		if resp != nil && (resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusForbidden) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("get branch info for %s/%s: %w", owner, repo, err)
+	}
+	if !br.GetProtected() {
+		return nil, nil
+	}
+	bp := &BranchProtection{}
+	if prot := br.GetProtection(); prot != nil {
+		if rsc := prot.GetRequiredStatusChecks(); rsc != nil && rsc.Contexts != nil {
+			bp.RequiredStatusChecks = append([]string(nil), *rsc.Contexts...)
+		}
+	}
+	return bp, nil
 }

@@ -17,6 +17,9 @@ type MockGitHubClient struct {
 	Rulesets       map[string]*BranchProtection // repo name -> rulesets protection
 	RulesetsErr    error                        // global rulesets error (used if RulesetsErrs is nil)
 	RulesetsErrs   map[string]error             // repo name -> per-repo rulesets error
+	BranchInfo     map[string]*BranchProtection // repo name -> public branch-info-derived protection
+	BranchInfoErr  error                        // global branch-info error (used if BranchInfoErrs is nil)
+	BranchInfoErrs map[string]error             // repo name -> per-repo branch-info error
 }
 
 func (m *MockGitHubClient) ListReposByAccount(ctx context.Context, name string) ([]Repo, error) {
@@ -68,6 +71,21 @@ func (m *MockGitHubClient) GetRulesets(ctx context.Context, owner, repo, branch 
 	}
 	if m.Rulesets != nil {
 		return m.Rulesets[repo], nil
+	}
+	return nil, nil
+}
+
+func (m *MockGitHubClient) GetBranchInfo(ctx context.Context, owner, repo, branch string) (*BranchProtection, error) {
+	if m.BranchInfoErrs != nil {
+		if err, ok := m.BranchInfoErrs[repo]; ok {
+			return nil, err
+		}
+	}
+	if m.BranchInfoErr != nil {
+		return nil, m.BranchInfoErr
+	}
+	if m.BranchInfo != nil {
+		return m.BranchInfo[repo], nil
 	}
 	return nil, nil
 }

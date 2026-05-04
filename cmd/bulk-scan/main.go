@@ -95,6 +95,7 @@ func main() {
 		orgsFile = flag.String("orgs", "", "path to file with one org/user slug per line (required)")
 		outDir   = flag.String("out", "./bulk-scan-output", "output directory (one subfolder per org)")
 		token    = flag.String("token", "", "GitHub token (defaults to $CODATUS_TOKEN)")
+		admin    = flag.Bool("admin", false, "the token has admin access on every target repo. When false (default), admin-only rules are skipped and don't appear in the per-org JSON or Markdown output.")
 	)
 	flag.Parse()
 
@@ -142,7 +143,7 @@ func main() {
 
 		fmt.Fprintf(os.Stderr, "[%d/%d] %s ...", i+1, total, org)
 
-		sr, scanErr := scanner.Scan(ctx, scanner.PATAuth{Token: *token, Name: org})
+		sr, scanErr := scanner.Scan(ctx, scanner.PATAuth{Token: *token, Name: org}, scanner.WithAdmin(*admin))
 		if scanErr != nil {
 			if scanner.IsRateLimitError(scanErr) {
 				fmt.Fprintf(os.Stderr, " ABORT: %v\n", scanErr)
@@ -257,9 +258,9 @@ func buildStats(sr scanner.ScanResult) stats {
 		ArchivedExcluded: sr.ArchivedExcluded,
 		ReposScanned:     len(sr.Results),
 		Score:            scorePtr,
-		RepoBuckets:      bucketCountsFor(sr.Results),
-		ScoredRules:      aggregate(sr.Results, scanner.ScoredRules()),
-		AdditionalChecks: aggregate(sr.Results, scanner.AdditionalRules()),
+		RepoBuckets:      bucketCountsFor(sr.Results, sr.RulesScored),
+		ScoredRules:      aggregate(sr.Results, sr.RulesScored),
+		AdditionalChecks: aggregate(sr.Results, sr.RulesAdditional),
 		MostRecentCommit: mostRecent,
 	}
 }
@@ -268,10 +269,10 @@ func buildStats(sr scanner.ScanResult) stats {
 // JSON contract (strong/moderate/weak); if scanner.Buckets() ever adds a
 // new bucket name this function silently drops it - that mismatch is
 // caught by TestBucketCountsFor and TestBuildStats_NewShape.
-func bucketCountsFor(results []scanner.RepoResult) bucketCounts {
+func bucketCountsFor(results []scanner.RepoResult, scoredRules []scanner.Rule) bucketCounts {
 	var bc bucketCounts
 	for _, rr := range results {
-		bucket, _, _, _ := scanner.BucketOf(rr)
+		bucket, _, _, _ := scanner.BucketOf(rr, scoredRules)
 		switch bucket.Name {
 		case "Strong":
 			bc.Strong++
@@ -331,10 +332,12 @@ func jsonKey(ruleName string) string {
 }
 
 // aggregate counts pass/fail across results for a fixed list of rules,
-// preserving the rules' input order. Rule names not present in the scan
-// results contribute zero counts (they still appear in the output, with
-// pass_rate=0). The caller decides which rules to pass in (typically
-// scanner.ScoredRules() or scanner.AdditionalRules()).
+// preserving the rules' input order. The caller is responsible for
+// passing the right rules - typically sr.RulesScored or
+// sr.RulesAdditional from the parent ScanResult, which correctly
+// reflects WithAdmin filtering. Rules absent from results yield zero
+// counts (legitimate when zero repos pass/fail, won't happen for the
+// rule-set the scan actually evaluated).
 func aggregate(results []scanner.RepoResult, rules []scanner.Rule) orderedRuleAggregates {
 	out := make(orderedRuleAggregates, 0, len(rules))
 	total := len(results)

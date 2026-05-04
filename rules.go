@@ -90,10 +90,20 @@ func (r HasBranchProtection) HowToFix() string {
 }
 
 // HasRequiredReviewers checks that at least one approving review is required.
+//
+// This rule is admin-only: the required-approving-reviewer count on a
+// classic per-repo branch protection is exposed only via the admin API
+// (GET /repos/{o}/{r}/branches/{br}/protection, returns 404 to non-admins).
+// Rulesets surface the count publicly, so repos using rulesets are still
+// counted in non-admin scans, but most classic-protected repos can't be
+// distinguished from "no protection." Rather than fail those silently,
+// the scanner skips this rule entirely on non-admin scans (see
+// WithAdmin in scanner.go).
 type HasRequiredReviewers struct{}
 
 func (r HasRequiredReviewers) Name() string           { return "Has required reviewers" }
 func (r HasRequiredReviewers) Category() RuleCategory { return CategoryScored }
+func (r HasRequiredReviewers) RequiresAdmin() bool    { return true }
 func (r HasRequiredReviewers) Check(repo Repo) bool {
 	return repo.BranchProtection != nil && repo.BranchProtection.RequiredReviewers >= 1
 }
@@ -136,58 +146,109 @@ func (r HasCodeowners) HowToFix() string {
 	return "Add a CODEOWNERS file mapping paths to GitHub users or teams. [GitHub docs](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners)."
 }
 
-// HasCIWorkflow checks that at least one .yml or .yaml file exists under .github/workflows/.
+// HasCIWorkflow checks that the repo has a CI workflow configured for any
+// of the well-known CI providers, not just GitHub Actions. Detected via
+// the presence of one of these signals at the repo root or under their
+// canonical directory:
+//
+//   - GitHub Actions:  .github/workflows/*.yml or *.yaml
+//   - CircleCI:        .circleci/config.yml
+//   - GitLab CI:       .gitlab-ci.yml
+//   - Travis CI:       .travis.yml
+//   - Buildkite:       any file under .buildkite/
+//   - Azure Pipelines: azure-pipelines.yml
+//   - Jenkins:         Jenkinsfile
+//
+// Repos using a CI integration that lives entirely server-side (e.g.,
+// CircleCI without a checked-in config) are still missed; this is a
+// best-effort signal based on what's visible in the repo.
 type HasCIWorkflow struct{}
 
 func (r HasCIWorkflow) Name() string           { return "Has CI workflow" }
 func (r HasCIWorkflow) Category() RuleCategory { return CategoryScored }
 func (r HasCIWorkflow) Check(repo Repo) bool {
 	for _, f := range repo.Files {
+		// GitHub Actions workflows under .github/workflows/<anything>.yml|yaml.
 		if strings.HasPrefix(f.Path, ".github/workflows/") &&
 			(strings.HasSuffix(f.Path, ".yml") || strings.HasSuffix(f.Path, ".yaml")) {
+			return true
+		}
+		// Buildkite uses a directory; any file inside counts.
+		if strings.HasPrefix(f.Path, ".buildkite/") {
+			return true
+		}
+		// Single-file CI configs at known paths.
+		switch f.Path {
+		case ".circleci/config.yml",
+			".gitlab-ci.yml",
+			".travis.yml",
+			"azure-pipelines.yml",
+			"Jenkinsfile":
 			return true
 		}
 	}
 	return false
 }
 func (r HasCIWorkflow) Description() string {
-	return "At least one .yml or .yaml workflow file exists in .github/workflows/."
+	return "The repo has a CI workflow configured: GitHub Actions (.github/workflows/), CircleCI (.circleci/config.yml), GitLab CI (.gitlab-ci.yml), Travis (.travis.yml), Buildkite (.buildkite/), Azure Pipelines (azure-pipelines.yml), or Jenkins (Jenkinsfile)."
 }
 func (r HasCIWorkflow) HowToFix() string {
-	return "Add a YAML workflow in .github/workflows/. [GitHub Actions quickstart](https://docs.github.com/en/actions/quickstart)."
+	return "Add a workflow file for the CI provider you use - the simplest path on GitHub is a YAML workflow under .github/workflows/. [GitHub Actions quickstart](https://docs.github.com/en/actions/quickstart)."
 }
 
-// HasReadme checks that a README.md or README file exists at the repo root.
-// (No size threshold - the previous "substantial" variant was dropped because
-// 2 KB is too low to discriminate quality and too high to reward minimal but
-// useful READMEs.)
+// HasReadme checks that some form of README file exists at the repo root.
+// Matches case-insensitively on the filename and accepts any extension
+// (or no extension), so README.md, readme.rst, README.txt, Readme,
+// README.markdown all pass. Subdirectory READMEs (e.g., docs/README.md)
+// don't count - the rule is about a top-level project README.
+//
+// (No size threshold - the previous "substantial" variant was dropped
+// because 2 KB is too low to discriminate quality and too high to reward
+// minimal but useful READMEs.)
 type HasReadme struct{}
 
 func (r HasReadme) Name() string           { return "Has README" }
 func (r HasReadme) Category() RuleCategory { return CategoryAdditional }
 func (r HasReadme) Check(repo Repo) bool {
-	return hasFile(repo.Files, "README.md") || hasFile(repo.Files, "README")
+	for _, f := range repo.Files {
+		if strings.Contains(f.Path, "/") {
+			continue // not at root
+		}
+		lower := strings.ToLower(f.Path)
+		if lower == "readme" || strings.HasPrefix(lower, "readme.") {
+			return true
+		}
+	}
+	return false
 }
 func (r HasReadme) Description() string {
-	return "A README.md or README file exists at the repository root."
+	return "A README file exists at the repository root. The match is case-insensitive and accepts any extension or none, so README.md, README.rst, README.txt, readme, etc. all pass."
 }
 func (r HasReadme) HowToFix() string {
 	return "Add a README that explains what the project is, how to install it, and how to use it."
 }
 
-// HasLicense checks that a LICENSE.md or LICENSE file exists in the repo root.
+// HasLicense uses GitHub's auto-detected license (Licensee) instead of
+// a path-pattern match, so any conventionally-named license file works:
+// LICENSE, LICENSE.md, LICENSE.txt, LICENCE (British), COPYING (GNU),
+// MIT-LICENSE, etc. - anything GitHub recognizes and surfaces as the
+// repo's `license.spdx_id` in the listing payload.
+//
+// Custom-text licenses GitHub can't auto-detect won't pass even though
+// the file may be present. That's a known false negative; the trade-off
+// is worth it for the much broader correct-positive coverage.
 type HasLicense struct{}
 
 func (r HasLicense) Name() string           { return "Has LICENSE" }
 func (r HasLicense) Category() RuleCategory { return CategoryAdditional }
 func (r HasLicense) Check(repo Repo) bool {
-	return hasFile(repo.Files, "LICENSE.md") || hasFile(repo.Files, "LICENSE")
+	return repo.License != ""
 }
 func (r HasLicense) Description() string {
-	return "A LICENSE.md or LICENSE file exists at the repository root."
+	return "GitHub auto-detected an open-source license for the repository (any of LICENSE, LICENSE.md, COPYING, etc., recognizable by the Licensee gem)."
 }
 func (r HasLicense) HowToFix() string {
-	return "Pick a license at [choosealicense.com](https://choosealicense.com) and add it to your repo root."
+	return "Pick a license at [choosealicense.com](https://choosealicense.com) and add it to your repo root - GitHub will pick it up automatically."
 }
 
 // HasRepoDescription checks that the repo description field is not blank.
@@ -228,16 +289,20 @@ func (r HasActivity) HowToFix() string {
 	return "Push a commit, or archive the repository if it is no longer maintained."
 }
 
-// HasSecurityMd checks that SECURITY.md exists in the repo root or .github/.
+// HasSecurityMd checks that SECURITY.md exists in any of the three
+// locations GitHub recognizes for security policies: repo root,
+// .github/, or docs/.
 type HasSecurityMd struct{}
 
 func (r HasSecurityMd) Name() string           { return "Has SECURITY.md" }
 func (r HasSecurityMd) Category() RuleCategory { return CategoryAdditional }
 func (r HasSecurityMd) Check(repo Repo) bool {
-	return hasFile(repo.Files, "SECURITY.md") || hasFile(repo.Files, ".github/SECURITY.md")
+	return hasFile(repo.Files, "SECURITY.md") ||
+		hasFile(repo.Files, ".github/SECURITY.md") ||
+		hasFile(repo.Files, "docs/SECURITY.md")
 }
 func (r HasSecurityMd) Description() string {
-	return "A SECURITY.md file exists at the repository root or in .github/."
+	return "A SECURITY.md file exists at the repository root, in .github/, or in docs/."
 }
 func (r HasSecurityMd) HowToFix() string {
 	return "Add a SECURITY.md describing how to report vulnerabilities. [GitHub's template](https://docs.github.com/en/code-security/getting-started/adding-a-security-policy-to-your-repository)."

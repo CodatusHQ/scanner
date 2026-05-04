@@ -71,7 +71,7 @@ func TestBucketCountsFor(t *testing.T) {
 		repoWithScoredPasses("f", 1),
 		repoWithScoredPasses("g", 0),
 	}
-	got := bucketCountsFor(results)
+	got := bucketCountsFor(results, scanner.ScoredRules())
 	if got.Strong != 2 {
 		t.Errorf("Strong = %d, want 2", got.Strong)
 	}
@@ -166,6 +166,8 @@ func TestBuildStats_NewShape(t *testing.T) {
 		ForksExcluded:    4,
 		ArchivedExcluded: 2,
 		Results:          []scanner.RepoResult{a, b, c},
+		RulesScored:      scanner.ScoredRules(),
+		RulesAdditional:  scanner.AdditionalRules(),
 	}
 
 	got := buildStats(sr)
@@ -381,6 +383,15 @@ func repoWithScoredPasses(name string, passing int) scanner.RepoResult {
 			Passed:   i < passing,
 		})
 	}
+	// Also emit additional-rule results so aggregate() (which now skips
+	// rules absent from results) doesn't drop them. Default false; tests
+	// don't currently care about additional-check counts.
+	for _, r := range scanner.AdditionalRules() {
+		rr.Results = append(rr.Results, scanner.RuleResult{
+			RuleName: r.Name(),
+			Passed:   false,
+		})
+	}
 	return rr
 }
 
@@ -391,4 +402,58 @@ func mustParseTime(t *testing.T, s string) time.Time {
 		t.Fatalf("parse %q: %v", s, err)
 	}
 	return tt
+}
+
+func TestBuildStats_NonAdminOmitsAdminOnlyRule(t *testing.T) {
+	// When sr.RulesScored doesn't include the admin-only rule (modeling
+	// a non-admin scan), the marshaled JSON's scored_rules object must
+	// omit the has_required_reviewers key entirely - not render it as
+	// {passing: 0, failing: 0, pass_rate: 0} (which would be
+	// indistinguishable from a real-but-failing rule).
+	var nonAdminScored []scanner.Rule
+	for _, r := range scanner.ScoredRules() {
+		if r.Name() != "Has required reviewers" {
+			nonAdminScored = append(nonAdminScored, r)
+		}
+	}
+	rr := scanner.RepoResult{RepoName: "a"}
+	for _, r := range nonAdminScored {
+		rr.Results = append(rr.Results, scanner.RuleResult{RuleName: r.Name(), Passed: true})
+	}
+	for _, r := range scanner.AdditionalRules() {
+		rr.Results = append(rr.Results, scanner.RuleResult{RuleName: r.Name(), Passed: false})
+	}
+	sr := scanner.ScanResult{
+		Org:             "test",
+		ScannedAt:       mustParseTime(t, "2026-04-30T10:15:00Z"),
+		TotalRepos:      1,
+		Results:         []scanner.RepoResult{rr},
+		RulesScored:     nonAdminScored,
+		RulesAdditional: scanner.AdditionalRules(),
+	}
+	got := buildStats(sr)
+	blob, err := json.Marshal(got)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	// has_required_reviewers must not appear anywhere in the JSON.
+	if strings.Contains(string(blob), "has_required_reviewers") {
+		t.Errorf("non-admin scan should not include has_required_reviewers key; got JSON:\n%s", blob)
+	}
+	// The other 4 scored rules must still appear in their importance order.
+	for _, k := range []string{
+		"has_branch_protection",
+		"requires_status_checks_before_merging",
+		"has_codeowners",
+		"has_ci_workflow",
+	} {
+		if !strings.Contains(string(blob), `"`+k+`"`) {
+			t.Errorf("expected scored_rules key %q in non-admin JSON; got:\n%s", k, blob)
+		}
+	}
+	// Additional checks unchanged.
+	if !strings.Contains(string(blob), `"has_security_md"`) {
+		t.Errorf("expected additional_checks to remain populated in non-admin JSON; got:\n%s", blob)
+	}
 }

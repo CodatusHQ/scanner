@@ -33,7 +33,7 @@ func TestGenerateReport_StrongAndWeakBuckets(t *testing.T) {
 		},
 	}
 
-	got := GenerateReport(sr)
+	got := GenerateReport(withDefaultRules(sr))
 
 	want := `# Codatus - Engineering Standards Scorecard
 
@@ -72,7 +72,7 @@ func TestGenerateReport_StrongAndWeakBuckets(t *testing.T) {
 
 </details>
 
-### Weak (≤39%)
+### Weak (≤29%)
 
 <details>
 <summary><a href="https://github.com/test-org/beta">beta</a> - 0%</summary>
@@ -123,8 +123,43 @@ func TestGenerateReport_StrongAndWeakBuckets(t *testing.T) {
 
 #### Has CI workflow
 
-- **What it checks:** At least one .yml or .yaml workflow file exists in .github/workflows/.
-- **How to fix:** Add a YAML workflow in .github/workflows/. [GitHub Actions quickstart](https://docs.github.com/en/actions/quickstart).
+- **What it checks:** The repo has a CI workflow configured: GitHub Actions (.github/workflows/), CircleCI (.circleci/config.yml), GitLab CI (.gitlab-ci.yml), Travis (.travis.yml), Buildkite (.buildkite/), Azure Pipelines (azure-pipelines.yml), or Jenkins (Jenkinsfile).
+- **How to fix:** Add a workflow file for the CI provider you use - the simplest path on GitHub is a YAML workflow under .github/workflows/. [GitHub Actions quickstart](https://docs.github.com/en/actions/quickstart).
+
+### Additional checks
+
+#### Has README
+
+- **What it checks:** A README file exists at the repository root. The match is case-insensitive and accepts any extension or none, so README.md, README.rst, README.txt, readme, etc. all pass.
+- **How to fix:** Add a README that explains what the project is, how to install it, and how to use it.
+
+---
+
+#### Has LICENSE
+
+- **What it checks:** GitHub auto-detected an open-source license for the repository (any of LICENSE, LICENSE.md, COPYING, etc., recognizable by the Licensee gem).
+- **How to fix:** Pick a license at [choosealicense.com](https://choosealicense.com) and add it to your repo root - GitHub will pick it up automatically.
+
+---
+
+#### Has repo description
+
+- **What it checks:** The repository has a non-empty description set in repo settings (visible at the top of the GitHub repo page).
+- **How to fix:** Edit the repo and add a one-line description.
+
+---
+
+#### Has activity
+
+- **What it checks:** The repository has had a commit (push) within the last 12 months.
+- **How to fix:** Push a commit, or archive the repository if it is no longer maintained.
+
+---
+
+#### Has SECURITY.md
+
+- **What it checks:** A SECURITY.md file exists at the repository root, in .github/, or in docs/.
+- **How to fix:** Add a SECURITY.md describing how to report vulnerabilities. [GitHub's template](https://docs.github.com/en/code-security/getting-started/adding-a-security-policy-to-your-repository).
 
 </details>
 `
@@ -135,7 +170,7 @@ func TestGenerateReport_StrongAndWeakBuckets(t *testing.T) {
 
 func TestGenerateReport_EmptyResults(t *testing.T) {
 	sr := ScanResult{Org: "empty-org", ScannedAt: testTime}
-	got := GenerateReport(sr)
+	got := GenerateReport(withDefaultRules(sr))
 
 	want := `# Codatus - Engineering Standards Scorecard
 
@@ -160,7 +195,7 @@ func TestGenerateReport_ScoreNAWhenNoScannedRepos(t *testing.T) {
 		},
 	}
 
-	got := GenerateReport(sr)
+	got := GenerateReport(withDefaultRules(sr))
 
 	if !strings.Contains(got, "**Score: N/A** (no repos available to score)") {
 		t.Errorf("expected inline N/A score callout; got:\n%s", got)
@@ -179,7 +214,7 @@ func TestGenerateReport_BucketSectionOmittedWhenEmpty(t *testing.T) {
 		},
 	}
 
-	got := GenerateReport(sr)
+	got := GenerateReport(withDefaultRules(sr))
 
 	if !strings.Contains(got, "### Strong (≥80%)") {
 		t.Errorf("expected Strong section; got:\n%s", got)
@@ -194,14 +229,21 @@ func TestGenerateReport_BucketSectionOmittedWhenEmpty(t *testing.T) {
 
 func TestGenerateReport_BothTablesShareColumnLayout(t *testing.T) {
 	// Scored rules and Additional checks should render with identical
-	// column headers so the two tables visually align.
+	// column headers so the two tables visually align. Use a fixture
+	// that exercises both - allScored(3) only emits scored entries, so
+	// the Additional checks section would otherwise be suppressed (the
+	// new aggregate() drops sections whose rules have zero results).
+	rr := RepoResult{RepoName: "a", Results: allScored(3)}
+	for _, r := range AdditionalRules() {
+		rr.Results = append(rr.Results, RuleResult{RuleName: r.Name(), Passed: false})
+	}
 	sr := ScanResult{
 		Org:        "test-org",
 		ScannedAt:  testTime,
 		TotalRepos: 1,
-		Results:    []RepoResult{{RepoName: "a", Results: allScored(3)}},
+		Results:    []RepoResult{rr},
 	}
-	got := GenerateReport(sr)
+	got := GenerateReport(withDefaultRules(sr))
 
 	if strings.Count(got, "| Rule | Passing | Failing | Pass rate |") != 2 {
 		t.Errorf("expected both tables to use 'Rule | Passing | Failing | Pass rate'; got:\n%s", got)
@@ -222,7 +264,7 @@ func TestGenerateReport_NoCompliantOrSkippedHeaderLines(t *testing.T) {
 		TotalRepos: 1,
 		Results:    []RepoResult{{RepoName: "a", Results: allScored(5)}},
 	}
-	got := GenerateReport(sr)
+	got := GenerateReport(withDefaultRules(sr))
 
 	if strings.Contains(got, "**Compliant:**") {
 		t.Errorf("expected no Compliant header line in new format; got:\n%s", got)
@@ -252,7 +294,7 @@ func TestGenerateReport_PerRepoOmitsEmptyFailureSection(t *testing.T) {
 			},
 		},
 	}
-	got := GenerateReport(sr)
+	got := GenerateReport(withDefaultRules(sr))
 
 	if strings.Contains(got, "**Failing scored rules:**") {
 		t.Errorf("expected no 'Failing scored rules' for a 5/5 repo; got:\n%s", got)
@@ -277,7 +319,7 @@ func TestGenerateReport_PerRepoSplitsFailuresByCategory(t *testing.T) {
 		TotalRepos: 1,
 		Results:    []RepoResult{{RepoName: "midrepo", Results: results}},
 	}
-	got := GenerateReport(sr)
+	got := GenerateReport(withDefaultRules(sr))
 
 	if !strings.Contains(got, "**Failing scored rules:**") {
 		t.Errorf("expected 'Failing scored rules' section; got:\n%s", got)
@@ -311,7 +353,7 @@ func TestGenerateReport_RuleReferenceSplitByCategory(t *testing.T) {
 			{RepoName: "a", Results: append(allScored(2), RuleResult{RuleName: "Has README", Passed: true})},
 		},
 	}
-	got := GenerateReport(sr)
+	got := GenerateReport(withDefaultRules(sr))
 
 	if !strings.Contains(got, "## Rule reference\n") {
 		t.Errorf("expected '## Rule reference' heading; got:\n%s", got)
@@ -340,7 +382,7 @@ func TestGenerateReport_WithSkippedRepos(t *testing.T) {
 			{RepoName: "huge-repo", KnownSkipReason: "file tree too large (truncated by GitHub API)"},
 		},
 	}
-	got := GenerateReport(sr)
+	got := GenerateReport(withDefaultRules(sr))
 
 	// Skipped count surfaces in the one-line repo-stats header line.
 	if !strings.Contains(got, "2 skipped") {
@@ -374,7 +416,7 @@ func TestGenerateReport_WithUnexpectedSkipError(t *testing.T) {
 			{RepoName: "broken-repo", UnknownSkipError: "get tree: status 500"},
 		},
 	}
-	got := GenerateReport(sr)
+	got := GenerateReport(withDefaultRules(sr))
 
 	if !strings.Contains(got, "[broken-repo](https://github.com/test-org/broken-repo) - unexpected error: get tree: status 500") {
 		t.Errorf("expected unexpected-error rendering; got:\n%s", got)
@@ -391,7 +433,7 @@ func TestGenerateReport_HeaderRepoStatsLineWithExclusions(t *testing.T) {
 		Results:          []RepoResult{{RepoName: "a", Results: allScored(5)}},
 		Skipped:          []RepoResult{{RepoName: "empty", KnownSkipReason: "repository is empty"}},
 	}
-	got := GenerateReport(sr)
+	got := GenerateReport(withDefaultRules(sr))
 
 	want := "**Repos:** 1 of 14 scanned (3 forks excluded, 1 archived excluded, 1 skipped)"
 	if !strings.Contains(got, want) {
@@ -418,7 +460,7 @@ func TestGenerateReport_HeaderRepoStatsLineWithoutExclusions(t *testing.T) {
 		TotalRepos: 1,
 		Results:    []RepoResult{{RepoName: "a", Results: allScored(5)}},
 	}
-	got := GenerateReport(sr)
+	got := GenerateReport(withDefaultRules(sr))
 
 	// No forks, no archived, no skipped → parenthetical is omitted entirely.
 	if !strings.Contains(got, "**Repos:** 1 of 1 scanned\n") {
@@ -438,7 +480,7 @@ func TestGenerateReport_HeaderUsesBrLineBreaks(t *testing.T) {
 		TotalRepos: 1,
 		Results:    []RepoResult{{RepoName: "a", Results: allScored(5)}},
 	}
-	got := GenerateReport(sr)
+	got := GenerateReport(withDefaultRules(sr))
 
 	if !strings.Contains(got, "**Org:** test-org<br>\n") {
 		t.Errorf("expected **Org:** line to end with <br>; got:\n%s", got)
