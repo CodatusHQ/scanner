@@ -193,6 +193,12 @@ func Fixture() scanner.ScanResult {
 		ArchivedExcluded: 1,
 		Results:          results,
 		Skipped:          skipped,
+		// The fixture represents the richest possible scan output
+		// (admin-mode), so all five scored rules are evaluated. Render-side
+		// code (Score, BucketOf, report writers) drives off these slices,
+		// so populating them is required for the fixture to render.
+		RulesScored:     scanner.ScoredRules(),
+		RulesAdditional: scanner.AdditionalRules(),
 	}
 }
 

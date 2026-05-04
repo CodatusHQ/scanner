@@ -40,6 +40,17 @@ func repoWithScoredPasses(name string, passing int) RepoResult {
 	return rr
 }
 
+// withDefaultRules populates sr.RulesScored / sr.RulesAdditional with the
+// full global rule sets - convenient for tests that construct a synthetic
+// ScanResult and don't care about WithAdmin filtering. Tests that DO care
+// (e.g. TestScan_NonAdminFiltersAdminOnlyRules) construct rule slices by
+// hand instead.
+func withDefaultRules(sr ScanResult) ScanResult {
+	sr.RulesScored = ScoredRules()
+	sr.RulesAdditional = AdditionalRules()
+	return sr
+}
+
 func TestScore_AverageOfScoredRulePassRates(t *testing.T) {
 	// repoWithScoredPasses passes the FIRST n scored rules. With 4 repos
 	// passing 5, 4, 3, 2 rules respectively, each rule's pass rate is:
@@ -57,7 +68,7 @@ func TestScore_AverageOfScoredRulePassRates(t *testing.T) {
 			repoWithScoredPasses("d", 2),
 		},
 	}
-	score, defined := Score(sr)
+	score, defined := Score(withDefaultRules(sr))
 	if !defined {
 		t.Fatal("expected score to be defined")
 	}
@@ -79,7 +90,7 @@ func TestScore_RoundsDown(t *testing.T) {
 		b.Results = append(b.Results, RuleResult{RuleName: r.Name(), Passed: false})
 		c.Results = append(c.Results, RuleResult{RuleName: r.Name(), Passed: false})
 	}
-	score, _ := Score(ScanResult{Results: []RepoResult{a, b, c}})
+	score, _ := Score(withDefaultRules(ScanResult{Results: []RepoResult{a, b, c}}))
 	if score != 6 {
 		t.Errorf("expected score=6 (rounded down), got %d", score)
 	}
@@ -102,7 +113,7 @@ func TestScore_OnlyScoredRulesContribute(t *testing.T) {
 		rr.Results = append(rr.Results, RuleResult{RuleName: r.Name(), Passed: true})
 	}
 	sr := ScanResult{Results: []RepoResult{rr}}
-	score, defined := Score(sr)
+	score, defined := Score(withDefaultRules(sr))
 	if !defined {
 		t.Fatal("expected score to be defined")
 	}
@@ -124,8 +135,9 @@ func TestBucketOf_ByPassingCount(t *testing.T) {
 		{4, "Strong", 80},
 		{5, "Strong", 100},
 	}
+	scored := ScoredRules()
 	for _, tc := range cases {
-		bucket, scoredPassing, scoredTotal, scorePct := BucketOf(repoWithScoredPasses("r", tc.passing))
+		bucket, scoredPassing, scoredTotal, scorePct := BucketOf(repoWithScoredPasses("r", tc.passing), scored)
 		if bucket.Name != tc.wantName {
 			t.Errorf("passing=%d: expected bucket=%s, got %s", tc.passing, tc.wantName, bucket.Name)
 		}
@@ -145,8 +157,8 @@ func TestBuckets_Definition(t *testing.T) {
 	got := Buckets()
 	want := []Bucket{
 		{Name: "Strong", MinPct: 80, MaxPct: 100},
-		{Name: "Moderate", MinPct: 40, MaxPct: 79},
-		{Name: "Weak", MinPct: 0, MaxPct: 39},
+		{Name: "Moderate", MinPct: 30, MaxPct: 79},
+		{Name: "Weak", MinPct: 0, MaxPct: 29},
 	}
 	if len(got) != len(want) {
 		t.Fatalf("expected %d buckets, got %d", len(want), len(got))
@@ -194,7 +206,7 @@ func TestScan_SkipsArchivedRepos(t *testing.T) {
 		},
 	}
 
-	sr, err := scanWithClient(context.Background(), client, PATAuth{Name: "test-org"})
+	sr, err := scanWithClient(context.Background(), client, PATAuth{Name: "test-org"}, scanOptions{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -221,7 +233,7 @@ func TestScan_SkipsForkedRepos(t *testing.T) {
 		},
 	}
 
-	sr, err := scanWithClient(context.Background(), client, PATAuth{Name: "test-org"})
+	sr, err := scanWithClient(context.Background(), client, PATAuth{Name: "test-org"}, scanOptions{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -247,7 +259,7 @@ func TestScan_PerRepoMostRecentCommit(t *testing.T) {
 		},
 	}
 
-	sr, err := scanWithClient(context.Background(), client, PATAuth{Name: "test-org"})
+	sr, err := scanWithClient(context.Background(), client, PATAuth{Name: "test-org"}, scanOptions{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -273,7 +285,7 @@ func TestScan_PerRepoMostRecentCommit_Skipped(t *testing.T) {
 		TreeErrs: map[string]error{"empty-repo": ErrEmptyRepo},
 	}
 
-	sr, err := scanWithClient(context.Background(), client, PATAuth{Name: "test-org"})
+	sr, err := scanWithClient(context.Background(), client, PATAuth{Name: "test-org"}, scanOptions{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -297,7 +309,7 @@ func TestScan_ResultsSortedAlphabetically(t *testing.T) {
 		},
 	}
 
-	sr, err := scanWithClient(context.Background(), client, PATAuth{Name: "test-org"})
+	sr, err := scanWithClient(context.Background(), client, PATAuth{Name: "test-org"}, scanOptions{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -318,7 +330,7 @@ func TestScan_EvaluatesRulesPerRepo(t *testing.T) {
 		},
 	}
 
-	sr, err := scanWithClient(context.Background(), client, PATAuth{Name: "test-org"})
+	sr, err := scanWithClient(context.Background(), client, PATAuth{Name: "test-org"}, scanOptions{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -363,7 +375,7 @@ func TestScan_PropagatesClientError(t *testing.T) {
 		Err: fmt.Errorf("API rate limit exceeded"),
 	}
 
-	_, err := scanWithClient(context.Background(), client, PATAuth{Name: "test-org"})
+	_, err := scanWithClient(context.Background(), client, PATAuth{Name: "test-org"}, scanOptions{})
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -383,7 +395,7 @@ func TestScan_UsesRulesetsWhenAvailable(t *testing.T) {
 		},
 	}
 
-	sr, err := scanWithClient(context.Background(), client, PATAuth{Name: "test-org"})
+	sr, err := scanWithClient(context.Background(), client, PATAuth{Name: "test-org"}, scanOptions{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -407,7 +419,7 @@ func TestScan_FallsBackToClassicProtection(t *testing.T) {
 		},
 	}
 
-	sr, err := scanWithClient(context.Background(), client, PATAuth{Name: "test-org"})
+	sr, err := scanWithClient(context.Background(), client, PATAuth{Name: "test-org"}, scanOptions{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -430,7 +442,7 @@ func TestScan_SkipsEmptyRepo(t *testing.T) {
 		},
 	}
 
-	sr, err := scanWithClient(context.Background(), client, PATAuth{Name: "test-org"})
+	sr, err := scanWithClient(context.Background(), client, PATAuth{Name: "test-org"}, scanOptions{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -462,7 +474,7 @@ func TestScan_SkipsTruncatedTree(t *testing.T) {
 		},
 	}
 
-	sr, err := scanWithClient(context.Background(), client, PATAuth{Name: "test-org"})
+	sr, err := scanWithClient(context.Background(), client, PATAuth{Name: "test-org"}, scanOptions{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -487,7 +499,7 @@ func TestScan_SkipsUnexpectedGetTreeError(t *testing.T) {
 		},
 	}
 
-	sr, err := scanWithClient(context.Background(), client, PATAuth{Name: "test-org"})
+	sr, err := scanWithClient(context.Background(), client, PATAuth{Name: "test-org"}, scanOptions{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -517,7 +529,7 @@ func TestScan_SkipsUnexpectedRulesetsError(t *testing.T) {
 		},
 	}
 
-	sr, err := scanWithClient(context.Background(), client, PATAuth{Name: "test-org"})
+	sr, err := scanWithClient(context.Background(), client, PATAuth{Name: "test-org"}, scanOptions{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -546,7 +558,7 @@ func TestScan_SkipsUnexpectedBranchProtectionError(t *testing.T) {
 		},
 	}
 
-	sr, err := scanWithClient(context.Background(), client, PATAuth{Name: "test-org"})
+	sr, err := scanWithClient(context.Background(), client, PATAuth{Name: "test-org"}, scanOptions{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -568,7 +580,7 @@ func TestScan_AbortsOnRateLimitDuringGetTree(t *testing.T) {
 		TreeErr: newRateLimitError(),
 	}
 
-	_, err := scanWithClient(context.Background(), client, PATAuth{Name: "test-org"})
+	_, err := scanWithClient(context.Background(), client, PATAuth{Name: "test-org"}, scanOptions{})
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -583,7 +595,7 @@ func TestScan_AbortsOnRateLimitDuringGetRulesets(t *testing.T) {
 		RulesetsErr: newRateLimitError(),
 	}
 
-	_, err := scanWithClient(context.Background(), client, PATAuth{Name: "test-org"})
+	_, err := scanWithClient(context.Background(), client, PATAuth{Name: "test-org"}, scanOptions{})
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -598,7 +610,7 @@ func TestScan_AbortsOnRateLimitDuringGetBranchProtection(t *testing.T) {
 		ProtectionErr: newRateLimitError(),
 	}
 
-	_, err := scanWithClient(context.Background(), client, PATAuth{Name: "test-org"})
+	_, err := scanWithClient(context.Background(), client, PATAuth{Name: "test-org"}, scanOptions{})
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -661,4 +673,225 @@ func TestScan_DispatchesByAuthType(t *testing.T) {
 			t.Error("org endpoint must not be called for InstallationAuth")
 		}
 	})
+}
+
+func TestScan_NonAdminFiltersAdminOnlyRules(t *testing.T) {
+	// Non-admin scans (default) should skip rules that implement
+	// RequiresAdmin() == true. Currently the only such rule is
+	// HasRequiredReviewers; verify it doesn't appear in any RepoResult.
+	client := &MockGitHubClient{
+		Repos: []Repo{{Name: "repo-a", DefaultBranch: "main"}},
+	}
+	sr, err := scanWithClient(context.Background(), client, PATAuth{Name: "test-org"}, scanOptions{admin: false})
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if len(sr.Results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(sr.Results))
+	}
+	for _, res := range sr.Results[0].Results {
+		if res.RuleName == "Has required reviewers" {
+			t.Error("expected admin-only rule HasRequiredReviewers to be omitted from non-admin scan")
+		}
+	}
+}
+
+func TestScan_AdminIncludesAdminOnlyRules(t *testing.T) {
+	// With WithAdmin(true) every rule including admin-only ones runs.
+	client := &MockGitHubClient{
+		Repos: []Repo{{Name: "repo-a", DefaultBranch: "main"}},
+	}
+	sr, err := scanWithClient(context.Background(), client, PATAuth{Name: "test-org"}, scanOptions{admin: true})
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if len(sr.Results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(sr.Results))
+	}
+	found := false
+	for _, res := range sr.Results[0].Results {
+		if res.RuleName == "Has required reviewers" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected HasRequiredReviewers to run on admin scans")
+	}
+}
+
+func TestScore_OmitsAdminOnlyRulesUnderNonAdmin(t *testing.T) {
+	// Build two repos missing only HasRequiredReviewers from their results
+	// (modeling a non-admin scan). With sr.RulesScored set to the 4-rule
+	// subset (admin-only rule excluded), score should be the mean over
+	// those 4 rules - not 5 (which would dilute by 20%).
+	allScored := ScoredRules()
+	var nonAdminScored []Rule
+	for _, r := range allScored {
+		if r.Name() != "Has required reviewers" {
+			nonAdminScored = append(nonAdminScored, r)
+		}
+	}
+	mkRepo := func(name string, passing []bool) RepoResult {
+		rr := RepoResult{RepoName: name}
+		for i, r := range allScored {
+			if r.Name() == "Has required reviewers" {
+				continue // admin-only rule omitted
+			}
+			rr.Results = append(rr.Results, RuleResult{RuleName: r.Name(), Passed: passing[i]})
+		}
+		return rr
+	}
+	sr := ScanResult{
+		Results: []RepoResult{
+			mkRepo("a", []bool{true, true, true, true, true}),    // 4/4 → 100%
+			mkRepo("b", []bool{true, true, false, false, false}), // 1/4 (skipping required-reviewers) → 25%
+		},
+		RulesScored: nonAdminScored,
+	}
+	score, defined := Score(sr)
+	if !defined {
+		t.Fatal("expected defined score")
+	}
+	// Per-rule pass rates over the 4 evaluated rules:
+	//   has_branch_protection: 2/2 = 100
+	//   requires_status_checks: 1/2 = 50
+	//   has_codeowners: 1/2 = 50
+	//   has_ci_workflow: 1/2 = 50
+	// Mean = (100+50+50+50)/4 = 62
+	if score != 62 {
+		t.Errorf("expected score=62, got %d", score)
+	}
+}
+
+func TestBucketOf_DenominatorIsEvaluatedRules(t *testing.T) {
+	// With HasRequiredReviewers omitted from sr.RulesScored (non-admin
+	// scan), a repo passing 3 of the 4 remaining scored rules should
+	// land at 75% - not 60% (which would be 3/5 if the missing rule
+	// were still in the denominator).
+	var scored []Rule
+	for _, r := range ScoredRules() {
+		if r.Name() == "Has required reviewers" {
+			continue
+		}
+		scored = append(scored, r)
+	}
+	rr := RepoResult{RepoName: "a"}
+	for _, r := range scored {
+		rr.Results = append(rr.Results, RuleResult{RuleName: r.Name(), Passed: false})
+	}
+	// Mark the first 3 of the 4 evaluated rules as passing.
+	for i := 0; i < 3; i++ {
+		rr.Results[i].Passed = true
+	}
+	bucket, scoredPassing, scoredTotal, scorePct := BucketOf(rr, scored)
+	if scoredTotal != 4 {
+		t.Errorf("expected scoredTotal=4 (HasRequiredReviewers omitted), got %d", scoredTotal)
+	}
+	if scoredPassing != 3 {
+		t.Errorf("expected scoredPassing=3, got %d", scoredPassing)
+	}
+	if scorePct != 75 {
+		t.Errorf("expected scorePct=75, got %d", scorePct)
+	}
+	if bucket.Name != "Moderate" {
+		t.Errorf("expected Moderate (75%% lands in 30-79), got %s", bucket.Name)
+	}
+}
+
+func TestResolveBranchProtection_PriorityOrderAndPublicFallback(t *testing.T) {
+	// Each subtest seeds a different combination of source results and
+	// asserts which source's data ended up in the rule outputs. The
+	// third (branch info) is the new public fallback: a non-admin scan
+	// of a classic-protected repo should see has_branch_protection
+	// pass via the public branch endpoint instead of silently failing.
+	rulesetsBP := &BranchProtection{RequiredStatusChecks: []string{"rulesets-check"}}
+	classicBP := &BranchProtection{RequiredStatusChecks: []string{"classic-check"}}
+	branchInfoBP := &BranchProtection{RequiredStatusChecks: []string{"branchinfo-check"}}
+
+	cases := []struct {
+		name        string
+		rulesets    *BranchProtection
+		classic     *BranchProtection
+		branchInfo  *BranchProtection
+		wantContext string // first contained string we expect in the chosen BP
+		wantHasBP   bool   // expectation for has_branch_protection
+	}{
+		{"rulesets wins when present", rulesetsBP, classicBP, branchInfoBP, "rulesets-check", true},
+		{"classic used when rulesets nil", nil, classicBP, branchInfoBP, "classic-check", true},
+		{"branch info used when others nil", nil, nil, branchInfoBP, "branchinfo-check", true},
+		{"all nil → has_branch_protection fails", nil, nil, nil, "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &MockGitHubClient{
+				Repos:      []Repo{{Name: "r", DefaultBranch: "main"}},
+				Rulesets:   map[string]*BranchProtection{"r": tc.rulesets},
+				Protection: map[string]*BranchProtection{"r": tc.classic},
+				BranchInfo: map[string]*BranchProtection{"r": tc.branchInfo},
+			}
+			sr, err := scanWithClient(context.Background(), client, PATAuth{Name: "test-org"}, scanOptions{})
+			if err != nil {
+				t.Fatalf("scan: %v", err)
+			}
+			if len(sr.Results) != 1 {
+				t.Fatalf("expected 1 result, got %d", len(sr.Results))
+			}
+			var hasBP bool
+			for _, res := range sr.Results[0].Results {
+				if res.RuleName == "Has branch protection" && res.Passed {
+					hasBP = true
+				}
+			}
+			if hasBP != tc.wantHasBP {
+				t.Errorf("has_branch_protection: got %v, want %v", hasBP, tc.wantHasBP)
+			}
+		})
+	}
+}
+
+func TestScan_NonAdminKeepsNonAdminScoredRules(t *testing.T) {
+	// Companion to TestScan_NonAdminFiltersAdminOnlyRules: ensure that
+	// filtering out HasRequiredReviewers doesn't accidentally affect
+	// the other scored rules. Catches a regression where someone widens
+	// RequiresAdmin() to other rules without realizing.
+	client := &MockGitHubClient{
+		Repos: []Repo{{Name: "repo-a", DefaultBranch: "main"}},
+	}
+	sr, err := scanWithClient(context.Background(), client, PATAuth{Name: "test-org"}, scanOptions{admin: false})
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	wantPresent := []string{
+		"Has branch protection",
+		"Requires status checks before merging",
+		"Has CODEOWNERS",
+		"Has CI workflow",
+	}
+	gotNames := make(map[string]bool)
+	for _, res := range sr.Results[0].Results {
+		gotNames[res.RuleName] = true
+	}
+	for _, name := range wantPresent {
+		if !gotNames[name] {
+			t.Errorf("non-admin scan should still evaluate %q (only HasRequiredReviewers is admin-only)", name)
+		}
+	}
+	if gotNames["Has required reviewers"] {
+		t.Error("non-admin scan should NOT evaluate Has required reviewers")
+	}
+}
+
+func TestScore_NotDefinedWhenNoScoredRules(t *testing.T) {
+	// Score requires both repos AND scored rules to be defined. An
+	// org-level scan that filtered every scored rule out (only possible
+	// today if every scored rule were marked admin-only and admin=false)
+	// should render N/A, not a divide-by-zero.
+	sr := ScanResult{
+		Results: []RepoResult{{RepoName: "a"}},
+		// RulesScored intentionally empty
+	}
+	score, defined := Score(sr)
+	if defined {
+		t.Errorf("expected undefined score when no scored rules; got %d", score)
+	}
 }

@@ -32,22 +32,28 @@ Each rule produces a **pass** or **fail** result per repository. Rules fall into
 
 **Check:** the default branch has branch protection rules enabled (via the GitHub API's branch protection endpoint).
 
-**Pass:** branch protection is enabled on the default branch.
-**Fail:** branch protection is not enabled, or the API returns 404 (no protection configured).
+**Pass:** branch protection is configured on the default branch (via rulesets, classic per-repo protection, or the public branch endpoint's `protected` flag).
+**Fail:** none of the three signals indicate protection.
+
+The scanner consults three GitHub APIs in priority order: rulesets (publicly readable), the admin-only classic-protection endpoint (returns 404 to non-admins), and the public branch endpoint (which exposes `protected: true/false` to anyone with read access). The third fallback exists so non-admin scans can still detect classic protection without admin privileges - they just can't read all the *details* of that protection.
 
 #### 2. Has required reviewers
 
-**Check:** the default branch's branch protection rules require at least one approving review before merging (via the GitHub API - `required_pull_request_reviews.required_approving_review_count >= 1`).
+**Check:** the default branch's protection rules require at least one approving review before merging.
+
+**Admin-only.** This rule reads `required_pull_request_reviews.required_approving_review_count`, which is admin-only on classic per-repo protection. Public scans (without `--admin`) **skip** this rule entirely - it doesn't appear in the JSON output, the Markdown table, or the score calculation. When you scan with admin access (e.g. via the Codatus GitHub App, or your own org with a PAT belonging to an admin), pass `WithAdmin(true)` (library) or `--admin` (CLI) to include it.
 
 **Pass:** required reviewers is set to 1 or more.
 **Fail:** required reviewers is not configured, or set to 0, or branch protection is not enabled.
 
 #### 3. Requires status checks before merging
 
-**Check:** the default branch's branch protection rules require at least one status check to pass before merging (via the GitHub API - `required_status_checks` is configured with one or more contexts).
+**Check:** the default branch's protection rules require at least one status check to pass before merging.
 
-**Pass:** at least one required status check is configured.
-**Fail:** required status checks are not configured, or the list of required contexts is empty, or branch protection is not enabled.
+**Pass:** at least one required status check is configured (via rulesets, classic protection, or the public branch endpoint's `protection.required_status_checks.contexts`).
+**Fail:** none of those signals expose required contexts.
+
+The public branch endpoint exposes the `contexts` array even to non-admin readers, so this rule is correctly answered for both admin and public scans.
 
 #### 4. Has CODEOWNERS
 
@@ -58,28 +64,35 @@ Each rule produces a **pass** or **fail** result per repository. Rules fall into
 
 #### 5. Has CI workflow
 
-**Check:** at least one file exists under `.github/workflows/` with a `.yml` or `.yaml` extension.
+**Check:** the repo has a CI workflow configured for any of the supported providers:
+- GitHub Actions:  `.github/workflows/*.yml` or `*.yaml`
+- CircleCI:        `.circleci/config.yml`
+- GitLab CI:       `.gitlab-ci.yml`
+- Travis CI:       `.travis.yml`
+- Buildkite:       any file under `.buildkite/`
+- Azure Pipelines: `azure-pipelines.yml`
+- Jenkins:         `Jenkinsfile`
 
-**Pass:** one or more workflow files found.
-**Fail:** `.github/workflows/` is missing or empty.
+**Pass:** at least one of the above paths is present in the repo.
+**Fail:** none of the recognized CI configurations exist. (Repos with server-side-only CI integrations - e.g. CircleCI without a checked-in config - are still missed; the rule is best-effort based on what's in the tree.)
 
 ### Additional checks (informational only)
 
 #### 6. Has README
 
-**Check:** a `README.md` or `README` file exists in the repo root.
+**Check:** a README file exists at the repository root, matched case-insensitively with any extension or none. So `README.md`, `Readme.rst`, `README.txt`, `README.markdown`, `readme` all pass.
 
-**Pass:** file found.
-**Fail:** file not found.
+**Pass:** file found at root.
+**Fail:** no root-level file whose name is `readme` or starts with `readme.` (case-insensitive). Subdirectory READMEs (e.g. `docs/README.md`) don't count.
 
-There is no size threshold - any README counts. The previous "substantial" variant required >2 KB, which discriminated poorly (too low to weed out stubs, too high to reward minimal but useful READMEs).
+There is no size threshold - any README counts. The previous "substantial" variant required >2 KB, which discriminated poorly.
 
 #### 7. Has LICENSE
 
-**Check:** a `LICENSE` or `LICENSE.md` file exists in the repo root.
+**Check:** GitHub auto-detected an open-source license for the repository (the `license.spdx_id` field on the listing payload is non-empty). GitHub uses the [Licensee](https://github.com/licensee/licensee) gem to detect license files at any conventional path or filename - `LICENSE`, `LICENSE.md`, `LICENSE.txt`, `COPYING`, `LICENCE`, etc.
 
-**Pass:** file found.
-**Fail:** file not found.
+**Pass:** GitHub returned a license SPDX id.
+**Fail:** GitHub couldn't auto-detect a license (no recognized license file, or a custom-text license Licensee doesn't recognize).
 
 #### 8. Has repo description
 
@@ -97,28 +110,25 @@ There is no size threshold - any README counts. The previous "substantial" varia
 
 #### 10. Has SECURITY.md
 
-**Check:** a `SECURITY.md` file exists in the repo root or `.github/SECURITY.md`.
+**Check:** a `SECURITY.md` file exists in any of the three locations GitHub recognizes for security policies: repo root, `.github/SECURITY.md`, or `docs/SECURITY.md`.
 
-**Pass:** file found in either location.
+**Pass:** file found in any of those three locations.
 **Fail:** file not found.
 
 ### Score and bucketing
 
-The org-level score is the arithmetic mean of pass rates across the 5 scored rules:
+The org-level score is the arithmetic mean of pass rates across the scored rules **that were actually evaluated**. For an admin scan that's all 5 scored rules; for a public scan it's 4 (HasRequiredReviewers is admin-only and silently skipped). The denominator adapts so the score isn't dragged toward zero by rules the scan couldn't see.
 
 ```
-score = (pass_rate_branch_protection
-       + pass_rate_required_reviewers
-       + pass_rate_status_checks
-       + pass_rate_codeowners
-       + pass_rate_ci_workflow) / 5
+admin scan:   score = mean of 5 per-rule pass rates
+public scan:  score = mean of 4 per-rule pass rates (no required-reviewers)
 ```
 
-Each repo also gets a percentage based on how many of the 5 scored rules it passes (0%, 20%, 40%, 60%, 80%, 100%) and is bucketed:
+Each repo also gets a percentage based on the fraction of evaluated scored rules it passes (5-rule scans land at 0/20/40/60/80/100; 4-rule scans land at 0/25/50/75/100), and is bucketed:
 
-- **Strong (≥80%):** 4 or 5 scored rules passing
-- **Moderate (40-79%):** 2 or 3 scored rules passing
-- **Weak (≤39%):** 0 or 1 scored rules passing
+- **Strong (≥80%)**
+- **Moderate (30-79%)**
+- **Weak (≤29%)**
 
 Additional checks do not affect either the org score or the per-repo bucket.
 
@@ -166,7 +176,7 @@ The scorecard is a single Markdown document. Structure:
 
 </details>
 
-### Moderate (40-79%)
+### Moderate (30-79%)
 
 <details>
 <summary><a href="https://github.com/{org}/repo-b">repo-b</a> - 60%</summary>
@@ -180,7 +190,7 @@ The scorecard is a single Markdown document. Structure:
 
 </details>
 
-### Weak (≤39%)
+### Weak (≤29%)
 
 <details>
 <summary><a href="https://github.com/{org}/repo-c">repo-c</a> - 0%</summary>
@@ -290,6 +300,7 @@ results, err := scanner.Scan(ctx, scanner.InstallationAuth{
 | Option | Description |
 |--------|-------------|
 | `WithBaseURL(url string)` | Override the GitHub API base URL. Defaults to the public GitHub API. Useful for testing against a mock server or targeting GitHub Enterprise. |
+| `WithAdmin(b bool)` | Tell the scanner the auth has admin access on every target repo. Default `false`. When `true`, the scanner runs admin-only rules (currently: `Has required reviewers`). When `false`, those rules are silently skipped - they don't appear in any per-repo result, the JSON output, or the Markdown report. Pass `true` for installation-token scans (the Codatus GitHub App is granted admin), or for PAT scans where you're an admin of every target org. |
 
 ### Required token permissions
 
@@ -334,6 +345,9 @@ stark-industries
 bulk-scan --orgs orgs.txt --out ./scans --token ghp_...
 # or with the token in env:
 CODATUS_TOKEN=ghp_... bulk-scan --orgs orgs.txt --out ./scans
+# admin-mode scan (you're an admin of every listed org, so include the
+# `Has required reviewers` rule too):
+CODATUS_TOKEN=ghp_... bulk-scan --orgs orgs.txt --out ./scans --admin
 ```
 
 Output layout:

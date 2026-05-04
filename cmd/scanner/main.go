@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -10,6 +11,9 @@ import (
 )
 
 func main() {
+	admin := flag.Bool("admin", false, "the token has admin access on every target repo (e.g. you are admin of CODATUS_ORG, or this is an installation token from the Codatus GitHub App). When false, admin-only rules are skipped.")
+	flag.Parse()
+
 	org := os.Getenv("CODATUS_ORG")
 	token := os.Getenv("CODATUS_TOKEN")
 
@@ -22,7 +26,7 @@ func main() {
 
 	auth := scanner.PATAuth{Token: token, Name: org}
 
-	sr, err := scanner.Scan(context.Background(), auth)
+	sr, err := scanner.Scan(context.Background(), auth, scanner.WithAdmin(*admin))
 	if err != nil {
 		log.Fatal(err)
 	}

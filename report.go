@@ -30,19 +30,19 @@ func GenerateReport(sr ScanResult) string {
 	}
 
 	if len(scanned) > 0 {
-		writeScoredRulesSection(&b, scanned)
+		writeRulesTable(&b, sr, "Scored rules", sr.RulesScored)
 		writeScoreCallout(&b, sr)
-		writeAdditionalChecksSection(&b, scanned)
+		writeRulesTable(&b, sr, "Additional checks", sr.RulesAdditional)
 	} else {
 		// No scanned repos but some were skipped: emit the score callout
 		// in its N/A form so the structure is consistent.
 		writeScoreCallout(&b, sr)
 	}
 
-	writeRepoDetailsSection(&b, sr.Org, scanned, skipped)
+	writeRepoDetailsSection(&b, sr)
 
 	if len(scanned) > 0 {
-		writeRuleReferenceSection(&b, scanned)
+		writeRuleReferenceSection(&b, sr)
 	}
 
 	return b.String()
@@ -95,8 +95,14 @@ type ruleAggregate struct {
 }
 
 // aggregate counts pass/fail across results for a fixed list of rules,
-// preserving the rules' input order. Rule names not present in the
-// scan results contribute zero counts (they still appear in the table).
+// preserving the rules' input order. Every rule passed in produces a
+// row in the output; the caller is responsible for filtering the rule
+// list down to what was actually evaluated (typically by passing
+// sr.RulesScored or sr.RulesAdditional). A rule whose name doesn't
+// appear in any RepoResult.Results yields zero counts, which is the
+// right behavior for the legitimate case where the rule ran but every
+// repo was skipped by it - it should NOT happen for admin-filtered
+// rules because those don't reach this function.
 func aggregate(results []RepoResult, rules []Rule) []ruleAggregate {
 	out := make([]ruleAggregate, len(rules))
 	total := len(results)
@@ -121,23 +127,24 @@ func aggregate(results []RepoResult, rules []Rule) []ruleAggregate {
 	return out
 }
 
-func writeScoredRulesSection(b *strings.Builder, scanned []RepoResult) {
-	b.WriteString("\n## Scored rules\n\n")
-	b.WriteString("| Rule | Passing | Failing | Pass rate |\n")
-	b.WriteString("|------|---------|---------|----------|\n")
-	for _, agg := range aggregate(scanned, ScoredRules()) {
-		fmt.Fprintf(b, "| %s | %d | %d | %d%% |\n", agg.rule.Name(), agg.passing, agg.failing, agg.passRate)
+// writeRulesTable emits a `## <heading>` section with the standard
+// rule-aggregate table (Rule / Passing / Failing / Pass rate). The
+// caller picks the rule list - typically sr.RulesScored for the
+// "Scored rules" section and sr.RulesAdditional for "Additional
+// checks". An empty rule list suppresses the entire section.
+//
+// Both tables share the same column layout so renderers that
+// auto-size by header text produce visually aligned tables. The
+// "Additional checks" section heading already conveys "informational
+// only" - no need for distinct columns to signal it.
+func writeRulesTable(b *strings.Builder, sr ScanResult, heading string, rules []Rule) {
+	if len(rules) == 0 {
+		return
 	}
-}
-
-func writeAdditionalChecksSection(b *strings.Builder, scanned []RepoResult) {
-	// Same column layout as Scored rules so the two tables visually
-	// align in any renderer that auto-sizes by header text. The section
-	// heading already conveys "informational only".
-	b.WriteString("\n## Additional checks\n\n")
+	fmt.Fprintf(b, "\n## %s\n\n", heading)
 	b.WriteString("| Rule | Passing | Failing | Pass rate |\n")
 	b.WriteString("|------|---------|---------|----------|\n")
-	for _, agg := range aggregate(scanned, AdditionalRules()) {
+	for _, agg := range aggregate(sr.Results, rules) {
 		fmt.Fprintf(b, "| %s | %d | %d | %d%% |\n", agg.rule.Name(), agg.passing, agg.failing, agg.passRate)
 	}
 }
@@ -152,49 +159,27 @@ func writeScoreCallout(b *strings.Builder, sr ScanResult) {
 }
 
 // writeRuleReferenceSection emits a collapsed <details> block listing
-// every rule actually present in the scan results, split into Scored
-// rules and Additional checks subsections. Each subsection's content is
-// ordered to match the corresponding summary table above.
-//
-// Rules absent from results (e.g., ad-hoc test fixtures using made-up
-// rule names) are omitted; if no rules survive the filter, the entire
-// section is skipped.
-func writeRuleReferenceSection(b *strings.Builder, results []RepoResult) {
-	seen := make(map[string]bool)
-	for _, rr := range results {
-		for _, result := range rr.Results {
-			seen[result.RuleName] = true
-		}
-	}
-
-	scored := filterPresent(ScoredRules(), seen)
-	additional := filterPresent(AdditionalRules(), seen)
-	if len(scored) == 0 && len(additional) == 0 {
+// the rules that were actually evaluated, split into Scored rules and
+// Additional checks subsections. Order within each subsection matches
+// the order of sr.RulesScored / sr.RulesAdditional (importance order
+// from AllRules). If both slices are empty the entire section is skipped.
+func writeRuleReferenceSection(b *strings.Builder, sr ScanResult) {
+	if len(sr.RulesScored) == 0 && len(sr.RulesAdditional) == 0 {
 		return
 	}
 
 	b.WriteString("\n## Rule reference\n\n<details>\n<summary>What each rule checks and how to fix it</summary>\n")
 
-	if len(scored) > 0 {
+	if len(sr.RulesScored) > 0 {
 		b.WriteString("\n### Scored rules\n")
-		writeRuleReferenceEntries(b, scored)
+		writeRuleReferenceEntries(b, sr.RulesScored)
 	}
-	if len(additional) > 0 {
+	if len(sr.RulesAdditional) > 0 {
 		b.WriteString("\n### Additional checks\n")
-		writeRuleReferenceEntries(b, additional)
+		writeRuleReferenceEntries(b, sr.RulesAdditional)
 	}
 
 	b.WriteString("\n</details>\n")
-}
-
-func filterPresent(rules []Rule, seen map[string]bool) []Rule {
-	var out []Rule
-	for _, r := range rules {
-		if seen[r.Name()] {
-			out = append(out, r)
-		}
-	}
-	return out
 }
 
 func writeRuleReferenceEntries(b *strings.Builder, rules []Rule) {
@@ -213,7 +198,10 @@ func writeRuleReferenceEntries(b *strings.Builder, rules []Rule) {
 // into ### subsections: Strong / Moderate / Weak by score, then Skipped
 // for repos that couldn't be evaluated. Empty subsections are omitted;
 // the section header itself is suppressed when nothing has any rows.
-func writeRepoDetailsSection(b *strings.Builder, org string, scanned, skipped []RepoResult) {
+//
+// Per-repo bucket math uses sr.RulesScored as the denominator, so the
+// score percentage is consistent across every repo in the section.
+func writeRepoDetailsSection(b *strings.Builder, sr ScanResult) {
 	type bucketEntry struct {
 		bucket Bucket
 		repos  []RepoResult
@@ -224,10 +212,10 @@ func writeRepoDetailsSection(b *strings.Builder, org string, scanned, skipped []
 	for i, def := range defs {
 		groups[i] = &bucketEntry{bucket: def}
 	}
-	for _, rr := range scanned {
-		b, _, _, _ := BucketOf(rr)
+	for _, rr := range sr.Results {
+		bucket, _, _, _ := BucketOf(rr, sr.RulesScored)
 		for _, g := range groups {
-			if g.bucket.Name == b.Name {
+			if g.bucket.Name == bucket.Name {
 				g.repos = append(g.repos, rr)
 				break
 			}
@@ -241,7 +229,7 @@ func writeRepoDetailsSection(b *strings.Builder, org string, scanned, skipped []
 			break
 		}
 	}
-	if !hasScored && len(skipped) == 0 {
+	if !hasScored && len(sr.Skipped) == 0 {
 		return
 	}
 
@@ -250,10 +238,10 @@ func writeRepoDetailsSection(b *strings.Builder, org string, scanned, skipped []
 		if len(g.repos) == 0 {
 			continue
 		}
-		writeBucketSection(b, org, g.bucket, g.repos)
+		writeBucketSection(b, sr, g.bucket, g.repos)
 	}
-	if len(skipped) > 0 {
-		writeSkippedSubsection(b, org, skipped)
+	if len(sr.Skipped) > 0 {
+		writeSkippedSubsection(b, sr.Org, sr.Skipped)
 	}
 }
 
@@ -272,18 +260,18 @@ func bucketRangeLabel(b Bucket) string {
 	}
 }
 
-func writeBucketSection(b *strings.Builder, org string, bucket Bucket, repos []RepoResult) {
+func writeBucketSection(b *strings.Builder, sr ScanResult, bucket Bucket, repos []RepoResult) {
 	sort.Slice(repos, func(i, j int) bool { return repos[i].RepoName < repos[j].RepoName })
 
 	fmt.Fprintf(b, "\n### %s (%s)\n", bucket.Name, bucketRangeLabel(bucket))
 
-	scoredNames := make(map[string]bool)
-	for _, r := range ScoredRules() {
+	scoredNames := make(map[string]bool, len(sr.RulesScored))
+	for _, r := range sr.RulesScored {
 		scoredNames[r.Name()] = true
 	}
 
 	for _, rr := range repos {
-		_, _, _, scorePct := BucketOf(rr)
+		_, _, _, scorePct := BucketOf(rr, sr.RulesScored)
 
 		var failingScored, failingAdditional []string
 		for _, res := range rr.Results {
@@ -299,7 +287,7 @@ func writeBucketSection(b *strings.Builder, org string, bucket Bucket, repos []R
 
 		fmt.Fprintf(b,
 			"\n<details>\n<summary><a href=\"https://github.com/%s/%s\">%s</a> - %d%%</summary>\n",
-			org, rr.RepoName, rr.RepoName, scorePct,
+			sr.Org, rr.RepoName, rr.RepoName, scorePct,
 		)
 		if len(failingScored) > 0 {
 			b.WriteString("\n**Failing scored rules:**\n")
