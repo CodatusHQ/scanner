@@ -798,28 +798,73 @@ func TestBucketOf_DenominatorIsEvaluatedRules(t *testing.T) {
 	}
 }
 
-func TestResolveBranchProtection_PriorityOrderAndPublicFallback(t *testing.T) {
-	// Each subtest seeds a different combination of source results and
-	// asserts which source's data ended up in the rule outputs. The
-	// third (branch info) is the new public fallback: a non-admin scan
-	// of a classic-protected repo should see has_branch_protection
-	// pass via the public branch endpoint instead of silently failing.
-	rulesetsBP := &BranchProtection{RequiredStatusChecks: []string{"rulesets-check"}}
-	classicBP := &BranchProtection{RequiredStatusChecks: []string{"classic-check"}}
-	branchInfoBP := &BranchProtection{RequiredStatusChecks: []string{"branchinfo-check"}}
-
+func TestResolveBranchProtection_MergesAcrossSources(t *testing.T) {
+	// Each subtest seeds a different combination of source responses and
+	// asserts that resolveBranchProtection unions their data. The merge
+	// matters for hybrid configs (e.g. a ruleset enforcing PR review and
+	// classic protection enforcing status checks on the same branch); a
+	// first-non-nil chain would lose the second layer's data.
 	cases := []struct {
-		name        string
-		rulesets    *BranchProtection
-		classic     *BranchProtection
-		branchInfo  *BranchProtection
-		wantContext string // first contained string we expect in the chosen BP
-		wantHasBP   bool   // expectation for has_branch_protection
+		name             string
+		rulesets         *BranchProtection
+		classic          *BranchProtection
+		branchInfo       *BranchProtection
+		wantHasBP        bool
+		wantReviewers    int
+		wantStatusChecks []string
 	}{
-		{"rulesets wins when present", rulesetsBP, classicBP, branchInfoBP, "rulesets-check", true},
-		{"classic used when rulesets nil", nil, classicBP, branchInfoBP, "classic-check", true},
-		{"branch info used when others nil", nil, nil, branchInfoBP, "branchinfo-check", true},
-		{"all nil → has_branch_protection fails", nil, nil, nil, "", false},
+		{
+			name:             "all nil → no protection, all rules fail",
+			wantHasBP:        false,
+			wantReviewers:    0,
+			wantStatusChecks: nil,
+		},
+		{
+			name:             "rulesets only (modern config)",
+			rulesets:         &BranchProtection{RequiredReviewers: 2, RequiredStatusChecks: []string{"ci/build"}},
+			wantHasBP:        true,
+			wantReviewers:    2,
+			wantStatusChecks: []string{"ci/build"},
+		},
+		{
+			name:             "classic only (admin scan, legacy config)",
+			classic:          &BranchProtection{RequiredReviewers: 1, RequiredStatusChecks: []string{"ci/test"}},
+			wantHasBP:        true,
+			wantReviewers:    1,
+			wantStatusChecks: []string{"ci/test"},
+		},
+		{
+			name:             "branch info only (non-admin classic-protected repo)",
+			branchInfo:       &BranchProtection{RequiredStatusChecks: []string{"ci/lint"}},
+			wantHasBP:        true,
+			wantReviewers:    0,
+			wantStatusChecks: []string{"ci/lint"},
+		},
+		{
+			// The hybrid case: the bug this merge fixes. A ruleset
+			// configures PR review enforcement; classic protection on
+			// the same branch configures status checks. On a non-admin
+			// scan, classic returns nil but branch info exposes the
+			// status checks. Pre-merge, the chain stopped at rulesets
+			// and missed them.
+			name:             "hybrid: rulesets PR review + branch info status checks (non-admin)",
+			rulesets:         &BranchProtection{RequiredReviewers: 1},
+			branchInfo:       &BranchProtection{RequiredStatusChecks: []string{"ci/build"}},
+			wantHasBP:        true,
+			wantReviewers:    1,
+			wantStatusChecks: []string{"ci/build"},
+		},
+		{
+			// Both layers contribute status checks; both must pass, so
+			// the effective requirement is the union.
+			name:             "all three sources present: union status checks, max reviewers",
+			rulesets:         &BranchProtection{RequiredReviewers: 1, RequiredStatusChecks: []string{"ci/build"}},
+			classic:          &BranchProtection{RequiredReviewers: 2, RequiredStatusChecks: []string{"ci/build", "ci/test"}},
+			branchInfo:       &BranchProtection{RequiredStatusChecks: []string{"ci/test", "ci/lint"}},
+			wantHasBP:        true,
+			wantReviewers:    2,
+			wantStatusChecks: []string{"ci/build", "ci/test", "ci/lint"},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -829,24 +874,45 @@ func TestResolveBranchProtection_PriorityOrderAndPublicFallback(t *testing.T) {
 				Protection: map[string]*BranchProtection{"r": tc.classic},
 				BranchInfo: map[string]*BranchProtection{"r": tc.branchInfo},
 			}
-			sr, err := scanWithClient(context.Background(), client, PATAuth{Name: "test-org"}, scanOptions{})
+			bp, err := resolveBranchProtection(context.Background(), client, "test-org", "r", "main")
 			if err != nil {
-				t.Fatalf("scan: %v", err)
+				t.Fatalf("resolve: %v", err)
 			}
-			if len(sr.Results) != 1 {
-				t.Fatalf("expected 1 result, got %d", len(sr.Results))
+			if (bp != nil) != tc.wantHasBP {
+				t.Fatalf("Has branch protection: got bp=%v, want has=%v", bp, tc.wantHasBP)
 			}
-			var hasBP bool
-			for _, res := range sr.Results[0].Results {
-				if res.RuleName == "Has branch protection" && res.Passed {
-					hasBP = true
-				}
+			if !tc.wantHasBP {
+				return
 			}
-			if hasBP != tc.wantHasBP {
-				t.Errorf("has_branch_protection: got %v, want %v", hasBP, tc.wantHasBP)
+			if bp.RequiredReviewers != tc.wantReviewers {
+				t.Errorf("RequiredReviewers: got %d, want %d", bp.RequiredReviewers, tc.wantReviewers)
+			}
+			if !sameStringSet(bp.RequiredStatusChecks, tc.wantStatusChecks) {
+				t.Errorf("RequiredStatusChecks: got %v, want %v (order-insensitive)", bp.RequiredStatusChecks, tc.wantStatusChecks)
 			}
 		})
 	}
+}
+
+// sameStringSet reports whether two []string have the same elements
+// regardless of order. Used by the merge test where the union order
+// reflects iteration order across sources, which is implementation
+// detail rather than contract.
+func sameStringSet(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	m := make(map[string]int, len(a))
+	for _, s := range a {
+		m[s]++
+	}
+	for _, s := range b {
+		m[s]--
+		if m[s] < 0 {
+			return false
+		}
+	}
+	return true
 }
 
 func TestScan_NonAdminKeepsNonAdminScoredRules(t *testing.T) {

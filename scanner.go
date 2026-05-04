@@ -261,42 +261,74 @@ func Scan(ctx context.Context, auth Auth, opts ...Option) (ScanResult, error) {
 }
 
 // resolveBranchProtection asks the client for branch-protection details
-// from three different APIs in priority order, returning the first
-// non-nil response. The order matters because each source covers a
-// different population of repos:
+// from three different APIs and merges the results into a single
+// BranchProtection. Each source covers a different population of repos
+// AND a different subset of fields, so we union rather than short-circuit:
 //
-//  1. Rulesets - publicly readable; richest signal when the org has
-//     migrated to GitHub's modern rulesets feature.
-//  2. Classic per-repo protection - admin-only; richest signal for
-//     orgs still on Settings > Branches rules. Returns nil to non-admin
-//     tokens (404), so non-admin scans skip past it.
-//  3. Public branch info - publicly readable; partial signal (protected
-//     flag + required-status-check contexts, no reviewer count). Closes
-//     the gap so non-admin scans of classic-protected repos don't
-//     silently see "no protection".
+//  1. Rulesets - publicly readable; surfaces required-reviewer counts and
+//     required-status-check contexts when the org uses GitHub's modern
+//     rulesets feature.
+//  2. Classic per-repo protection - admin-only; full classic-protection
+//     payload (reviewer counts AND status checks). Returns nil to
+//     non-admin tokens (404).
+//  3. Public branch info - publicly readable; exposes the protected flag
+//     and the required-status-check contexts even for classic-protected
+//     repos visible to non-admins. (Reviewer count is admin-only and not
+//     exposed here.)
 //
+// Why merge instead of first-non-nil: a repo can have BOTH a ruleset
+// (e.g., a pull_request rule for review enforcement) AND classic
+// protection (e.g., status checks) on the same branch. Returning only
+// the first non-nil source loses the other layer's data - in particular,
+// non-admin scans of hybrid-configured repos would see the ruleset's
+// reviewer count but miss the classic layer's status checks (which the
+// public branch endpoint WOULD have surfaced if we'd kept walking).
+//
+// Merge semantics:
+//   - RequiredReviewers: max across sources. Both layers' enforcement
+//     stacks, so the effective minimum is the higher count.
+//   - RequiredStatusChecks: deduplicated union. All required checks
+//     across all layers must pass to merge.
+//
+// Returns nil when every source returns nil (no protection anywhere).
 // Errors from any source short-circuit and propagate to the caller,
-// which is responsible for distinguishing rate-limit aborts from
-// per-repo skips. Errors are wrapped with the source name for clarity.
+// which distinguishes rate-limit aborts from per-repo skips. Errors are
+// wrapped with the source name for clarity.
 func resolveBranchProtection(ctx context.Context, client GitHubClient, owner, repo, branch string) (*BranchProtection, error) {
 	type source struct {
 		name string
 		fn   func(context.Context, string, string, string) (*BranchProtection, error)
 	}
-	for _, src := range []source{
+	sources := []source{
 		{"rulesets", client.GetRulesets},
 		{"branch protection", client.GetBranchProtection},
 		{"branch info", client.GetBranchInfo},
-	} {
+	}
+
+	var merged *BranchProtection
+	seenChecks := make(map[string]bool)
+	for _, src := range sources {
 		bp, err := src.fn(ctx, owner, repo, branch)
 		if err != nil {
 			return nil, fmt.Errorf("get %s for %s/%s: %w", src.name, owner, repo, err)
 		}
-		if bp != nil {
-			return bp, nil
+		if bp == nil {
+			continue
+		}
+		if merged == nil {
+			merged = &BranchProtection{}
+		}
+		if bp.RequiredReviewers > merged.RequiredReviewers {
+			merged.RequiredReviewers = bp.RequiredReviewers
+		}
+		for _, c := range bp.RequiredStatusChecks {
+			if !seenChecks[c] {
+				seenChecks[c] = true
+				merged.RequiredStatusChecks = append(merged.RequiredStatusChecks, c)
+			}
 		}
 	}
-	return nil, nil
+	return merged, nil
 }
 
 // skipRepo converts a per-repo error into a RepoResult that records the
