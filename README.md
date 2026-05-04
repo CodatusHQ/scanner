@@ -167,6 +167,31 @@ The scorecard is a single Markdown document. Structure:
 | Has activity | 43 | 10 | 81% |
 | Has SECURITY.md | 3 | 50 | 5% |
 
+## Rule reference
+
+<details>
+<summary>How each rule works and how to fix failures</summary>
+
+### Scored rules
+
+#### Has branch protection
+
+Checks that the default branch has a protection rule in place. Detected via any of three GitHub APIs: ...
+
+---
+
+#### Has required reviewers
+
+...
+
+### Additional checks
+
+#### Has README
+
+...
+
+</details>
+
 ## Repository details
 
 ### Strong (≥80%)
@@ -208,34 +233,11 @@ The scorecard is a single Markdown document. Structure:
 
 - [empty-repo](https://github.com/{org}/empty-repo) - repository is empty
 - [huge-repo](https://github.com/{org}/huge-repo) - file tree too large (truncated by GitHub API)
-
-## Rule reference
-
-<details>
-<summary>What each rule checks and how to fix it</summary>
-
-### Scored rules
-
-#### Has branch protection
-- **What it checks:** ...
-- **How to fix:** ...
-
----
-
-#### Has required reviewers
-...
-
-### Additional checks
-
-#### Has README
-...
-
-</details>
 ```
 
 Header line breaks use explicit `<br>` so spec-compliant Markdown renderers (CommonMark/marked.js/kramdown/GitHub) emit one line per item instead of folding consecutive single-newlines into one paragraph. The repo-stats parenthetical drops fields that are zero - with no exclusions and no skipped repos, it collapses to `**Repos:** {scanned} of {total} scanned`.
 
-Tables render in fixed importance order (not sorted by pass rate). Both tables share the same column layout. The Rule reference section is collapsed by default and lists, for every rule actually present in the scan results, the "what it checks" / "how to fix" text - split into Scored rules and Additional checks subsections. Subsections (and entire buckets) are omitted when empty. Skipped repos are those that could not be scanned (empty repos, truncated file trees, API errors); they are excluded from the score and bucket counts, and render as the last subsection inside Repository details.
+Tables render in fixed importance order (not sorted by pass rate). Both tables share the same column layout. The Rule reference section is collapsed by default; each rule has a single self-contained description that names what's checked, every detection path the rule walks (legacy and modern GitHub mechanisms), and how to fix it. Rule reference precedes Repository details so the rule definitions are in hand before the per-repo failure lists (which only mention rule names). Subsections (and entire buckets) are omitted when empty. Skipped repos are those that could not be scanned (empty repos, truncated file trees, API errors); they are excluded from the score and bucket counts, and render as the last subsection inside Repository details.
 
 When `repos_scanned` is 0, the Score line reads `**Score: N/A** (no repos available to score)`.
 

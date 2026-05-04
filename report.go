@@ -14,8 +14,12 @@ import (
 //   2. ## Scored rules table (importance order, drives the score)
 //   3. **Score: N/100** inline callout (or **Score: N/A** when no repos)
 //   4. ## Additional checks table (importance order, same columns as scored)
-//   5. ## Repository details: ### Strong / Moderate / Weak / Skipped subsections
-//   6. ## Rule reference (collapsed <details>, split by category)
+//   5. ## Rule reference (collapsed <details>, split by category)
+//   6. ## Repository details: ### Strong / Moderate / Weak / Skipped subsections
+//
+// Rule reference precedes Repository details so a reader scanning top-down
+// has the rule definitions in hand before they hit the per-repo failure
+// lists, which only mention rule names.
 func GenerateReport(sr ScanResult) string {
 	var b strings.Builder
 
@@ -39,11 +43,11 @@ func GenerateReport(sr ScanResult) string {
 		writeScoreCallout(&b, sr)
 	}
 
-	writeRepoDetailsSection(&b, sr)
-
 	if len(scanned) > 0 {
 		writeRuleReferenceSection(&b, sr)
 	}
+
+	writeRepoDetailsSection(&b, sr)
 
 	return b.String()
 }
@@ -168,7 +172,7 @@ func writeRuleReferenceSection(b *strings.Builder, sr ScanResult) {
 		return
 	}
 
-	b.WriteString("\n## Rule reference\n\n<details>\n<summary>What each rule checks and how to fix it</summary>\n")
+	b.WriteString("\n## Rule reference\n\n<details>\n<summary>How each rule works and how to fix failures</summary>\n")
 
 	if len(sr.RulesScored) > 0 {
 		b.WriteString("\n### Scored rules\n")
@@ -184,9 +188,7 @@ func writeRuleReferenceSection(b *strings.Builder, sr ScanResult) {
 
 func writeRuleReferenceEntries(b *strings.Builder, rules []Rule) {
 	for i, r := range rules {
-		fmt.Fprintf(b, "\n#### %s\n\n", r.Name())
-		fmt.Fprintf(b, "- **What it checks:** %s\n", r.Description())
-		fmt.Fprintf(b, "- **How to fix:** %s\n", r.HowToFix())
+		fmt.Fprintf(b, "\n#### %s\n\n%s\n", r.Name(), r.Description())
 		if i < len(rules)-1 {
 			b.WriteString("\n---\n")
 		}
