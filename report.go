@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// GenerateReport produces a Markdown engineering-standards scorecard from a
+// GenerateReport produces a Markdown repo-standards scorecard from a
 // ScanResult. The structure is fixed and meaningful for prospects landing
 // from a cold-email link:
 //
@@ -53,7 +53,7 @@ func GenerateReport(sr ScanResult) string {
 }
 
 func writeHeader(b *strings.Builder, sr ScanResult) {
-	b.WriteString("# Codatus - Engineering Standards Scorecard\n\n")
+	b.WriteString("# Codatus - Repo Standards Scorecard\n\n")
 	// Each header line ends with `<br>` so spec-compliant Markdown
 	// renderers (marked.js, kramdown, GitHub) emit one line per item
 	// instead of folding consecutive single-newlines into one paragraph.

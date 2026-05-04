@@ -1,7 +1,7 @@
 # AGENTS.MD - Codatus Scanner
 
 ## Project in 10 lines
-Codatus is a scanner that checks GitHub repos against configurable engineering standards.
+Codatus is a scanner that checks GitHub repos against configurable repo standards.
 It connects to a GitHub org via the GitHub API, scans every repo against a set of rules
 (file existence, GitHub API-based checks), and returns structured results plus a Markdown
 scorecard.

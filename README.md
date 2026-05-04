@@ -1,6 +1,6 @@
 # Codatus
 
-Codatus scans every repository in a GitHub organization or user account against a set of engineering standards and produces a Markdown scorecard.
+Codatus scans every repository in a GitHub organization or user account against a set of repo standards and produces a Markdown scorecard.
 
 It answers one question: **how does each repo in your org measure up against the standards you care about?**
 
@@ -139,7 +139,7 @@ Additional checks do not affect either the org score or the per-repo bucket.
 The scorecard is a single Markdown document. Structure:
 
 ```
-# Codatus - Engineering Standards Scorecard
+# Codatus - Repo Standards Scorecard
 
 **Org:** {org_name}<br>
 **Scanned:** {timestamp}<br>
