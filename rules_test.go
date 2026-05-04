@@ -341,13 +341,10 @@ func TestHasRequiredStatusChecks_Fail_NoProtection(t *testing.T) {
 	}
 }
 
-func TestAllRules_DescriptionAndHowToFix_NonEmpty(t *testing.T) {
+func TestAllRules_Description_NonEmpty(t *testing.T) {
 	for _, r := range AllRules() {
 		if r.Description() == "" {
 			t.Errorf("rule %q returned empty Description", r.Name())
-		}
-		if r.HowToFix() == "" {
-			t.Errorf("rule %q returned empty HowToFix", r.Name())
 		}
 	}
 }

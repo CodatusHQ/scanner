@@ -15,16 +15,16 @@ const (
 )
 
 // Rule defines a named check that produces a pass/fail result for a repo.
-// Description and HowToFix supply the per-rule text used by the Markdown
-// scorecard's Rule reference section. Category determines whether the rule
-// feeds into the org-level score or appears in the informational-only
-// "Additional checks" section.
+// Description supplies the per-rule text used by the Markdown scorecard's
+// Rule reference section: a single self-contained paragraph that names
+// what's checked, every detection path the rule walks, and how to fix it.
+// Category determines whether the rule feeds into the org-level score or
+// appears in the informational-only "Additional checks" section.
 type Rule interface {
 	Name() string
 	Category() RuleCategory
 	Check(repo Repo) bool
 	Description() string
-	HowToFix() string
 }
 
 // RuleResult holds the outcome of a single rule check for a single repo.
@@ -83,10 +83,7 @@ func (r HasBranchProtection) Check(repo Repo) bool {
 	return repo.BranchProtection != nil
 }
 func (r HasBranchProtection) Description() string {
-	return "A branch-protection rule is configured on the default branch."
-}
-func (r HasBranchProtection) HowToFix() string {
-	return "In repo Settings > Branches, add a protection rule for the default branch. [GitHub docs](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches)."
+	return "Checks that the default branch has a protection rule in place. Detected via any of three GitHub APIs: the modern repository rulesets (Settings > Rules > Rulesets), the legacy classic branch-protection rules (Settings > Branches > Branch protection rules), or the `protected` flag on the public branch endpoint. To fix: add a rule for the default branch via either Rulesets or classic Branch protection rules. [GitHub docs](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches)."
 }
 
 // HasRequiredReviewers checks that at least one approving review is required.
@@ -108,10 +105,7 @@ func (r HasRequiredReviewers) Check(repo Repo) bool {
 	return repo.BranchProtection != nil && repo.BranchProtection.RequiredReviewers >= 1
 }
 func (r HasRequiredReviewers) Description() string {
-	return "The default branch's protection rules require at least one approving review before a PR can be merged."
-}
-func (r HasRequiredReviewers) HowToFix() string {
-	return `In repo Settings > Branches, edit the default-branch protection rule and turn on "Require pull request reviews before merging" with at least 1 required reviewer.`
+	return "Checks that the default branch's protection requires at least one approving review before a PR can be merged. The reviewer count is read from both modern repository rulesets (a `pull_request` rule with `required_approving_review_count >= 1`) and legacy classic branch protection (the `required_pull_request_reviews.required_approving_review_count` field). To fix: edit the default-branch rule (or ruleset) and enable the pull-request review requirement with at least 1 required reviewer."
 }
 
 // HasRequiredStatusChecks checks that at least one status check is required before merging.
@@ -123,10 +117,7 @@ func (r HasRequiredStatusChecks) Check(repo Repo) bool {
 	return repo.BranchProtection != nil && len(repo.BranchProtection.RequiredStatusChecks) > 0
 }
 func (r HasRequiredStatusChecks) Description() string {
-	return "The default branch's protection rules require at least one status check to pass before a PR can be merged."
-}
-func (r HasRequiredStatusChecks) HowToFix() string {
-	return `In repo Settings > Branches, edit the default-branch protection rule and turn on "Require status checks to pass before merging".`
+	return "Checks that the default branch's protection requires at least one status check to pass before a PR can be merged. Detected from any of three sources: modern repository rulesets (a `required_status_checks` rule), legacy classic branch protection (`required_status_checks.contexts`), or the public branch endpoint's `protection.required_status_checks.contexts` field. To fix: edit the default-branch rule (or ruleset), enable \"Require status checks to pass before merging\", and select at least one check."
 }
 
 // HasCodeowners checks that a CODEOWNERS file exists in root, docs/, or .github/.
@@ -140,10 +131,7 @@ func (r HasCodeowners) Check(repo Repo) bool {
 		hasFile(repo.Files, ".github/CODEOWNERS")
 }
 func (r HasCodeowners) Description() string {
-	return "A CODEOWNERS file exists at the repo root, in .github/, or in docs/."
-}
-func (r HasCodeowners) HowToFix() string {
-	return "Add a CODEOWNERS file mapping paths to GitHub users or teams. [GitHub docs](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners)."
+	return "Checks for a CODEOWNERS file in any of the three locations GitHub honors: the repo root, `.github/`, or `docs/`. To fix: add a CODEOWNERS file in one of those locations mapping paths to GitHub users or teams. [GitHub docs](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners)."
 }
 
 // HasCIWorkflow checks that the repo has a CI workflow configured for any
@@ -190,10 +178,7 @@ func (r HasCIWorkflow) Check(repo Repo) bool {
 	return false
 }
 func (r HasCIWorkflow) Description() string {
-	return "The repo has a CI workflow configured: GitHub Actions (.github/workflows/), CircleCI (.circleci/config.yml), GitLab CI (.gitlab-ci.yml), Travis (.travis.yml), Buildkite (.buildkite/), Azure Pipelines (azure-pipelines.yml), or Jenkins (Jenkinsfile)."
-}
-func (r HasCIWorkflow) HowToFix() string {
-	return "Add a workflow file for the CI provider you use - the simplest path on GitHub is a YAML workflow under .github/workflows/. [GitHub Actions quickstart](https://docs.github.com/en/actions/quickstart)."
+	return "Checks for a checked-in CI configuration file from any of the major providers: GitHub Actions (any `.yml` or `.yaml` file under `.github/workflows/`), CircleCI (`.circleci/config.yml`), GitLab CI (`.gitlab-ci.yml`), Travis (`.travis.yml`), Buildkite (any file under `.buildkite/`), Azure Pipelines (`azure-pipelines.yml`), or Jenkins (`Jenkinsfile`). Setups whose configuration lives entirely server-side (no checked-in file) are not detected. To fix: add a workflow file for the provider you use. The simplest path on GitHub is a YAML workflow under `.github/workflows/`. [GitHub Actions quickstart](https://docs.github.com/en/actions/quickstart)."
 }
 
 // HasReadme checks that some form of README file exists at the repo root.
@@ -222,10 +207,7 @@ func (r HasReadme) Check(repo Repo) bool {
 	return false
 }
 func (r HasReadme) Description() string {
-	return "A README file exists at the repository root. The match is case-insensitive and accepts any extension or none, so README.md, README.rst, README.txt, readme, etc. all pass."
-}
-func (r HasReadme) HowToFix() string {
-	return "Add a README that explains what the project is, how to install it, and how to use it."
+	return "Checks for a README file at the repository root. The match is case-insensitive and accepts any extension or none, so `README.md`, `README.rst`, `README.txt`, `Readme`, `readme.markdown` all pass. READMEs in subdirectories don't count. To fix: add a top-level README that explains what the project is, how to install it, and how to use it."
 }
 
 // HasLicense uses GitHub's auto-detected license (Licensee) instead of
@@ -245,10 +227,7 @@ func (r HasLicense) Check(repo Repo) bool {
 	return repo.License != ""
 }
 func (r HasLicense) Description() string {
-	return "GitHub auto-detected an open-source license for the repository (any of LICENSE, LICENSE.md, COPYING, etc., recognizable by the Licensee gem)."
-}
-func (r HasLicense) HowToFix() string {
-	return "Pick a license at [choosealicense.com](https://choosealicense.com) and add it to your repo root - GitHub will pick it up automatically."
+	return "Checks GitHub's auto-detected license field, which GitHub populates by running the Licensee gem against the repo and recognizing conventionally-named license files: `LICENSE`, `LICENSE.md`, `LICENSE.txt`, `LICENCE`, `COPYING`, `MIT-LICENSE`, and similar variants. Custom-text licenses Licensee can't classify won't pass even if a file is present. To fix: pick a license at [choosealicense.com](https://choosealicense.com) and add it to your repo root using one of the recognized filenames. GitHub will detect it automatically."
 }
 
 // HasRepoDescription checks that the repo description field is not blank.
@@ -260,10 +239,7 @@ func (r HasRepoDescription) Check(repo Repo) bool {
 	return strings.TrimSpace(repo.Description) != ""
 }
 func (r HasRepoDescription) Description() string {
-	return "The repository has a non-empty description set in repo settings (visible at the top of the GitHub repo page)."
-}
-func (r HasRepoDescription) HowToFix() string {
-	return "Edit the repo and add a one-line description."
+	return "Checks that the repository's description field (set via the About panel, shown at the top of the GitHub repo page) is non-empty. To fix: edit the repo's About panel and add a one-line description."
 }
 
 // HasActivity checks that the repo has had a commit (push) within the last
@@ -283,10 +259,7 @@ func (r HasActivity) Check(repo Repo) bool {
 	return repo.PushedAt.After(now.AddDate(-1, 0, 0))
 }
 func (r HasActivity) Description() string {
-	return "The repository has had a commit (push) within the last 12 months."
-}
-func (r HasActivity) HowToFix() string {
-	return "Push a commit, or archive the repository if it is no longer maintained."
+	return "Checks that the repository has had a commit (push) within the last 12 months, based on GitHub's `pushed_at` timestamp on the repo. To fix: push a commit, or archive the repository if it's no longer maintained."
 }
 
 // HasSecurityMd checks that SECURITY.md exists in any of the three
@@ -302,10 +275,7 @@ func (r HasSecurityMd) Check(repo Repo) bool {
 		hasFile(repo.Files, "docs/SECURITY.md")
 }
 func (r HasSecurityMd) Description() string {
-	return "A SECURITY.md file exists at the repository root, in .github/, or in docs/."
-}
-func (r HasSecurityMd) HowToFix() string {
-	return "Add a SECURITY.md describing how to report vulnerabilities. [GitHub's template](https://docs.github.com/en/code-security/getting-started/adding-a-security-policy-to-your-repository)."
+	return "Checks for a SECURITY.md file in any of the three locations GitHub recognizes for security policies: the repo root, `.github/`, or `docs/`. To fix: add a SECURITY.md describing how to report vulnerabilities. [GitHub's template](https://docs.github.com/en/code-security/getting-started/adding-a-security-policy-to-your-repository)."
 }
 
 func findFile(files []FileEntry, path string) (FileEntry, bool) {
