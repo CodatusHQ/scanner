@@ -310,7 +310,7 @@ func mostRecentCommit(sr scanner.ScanResult) time.Time {
 //
 //   "Has repo description"                       -> "has_repo_description"
 //   "Has SECURITY.md"                            -> "has_security_md"
-//   "Requires status checks before merging"      -> "requires_status_checks_before_merging"
+//   "Has required checks"                        -> "has_required_checks"
 //
 // We derive instead of hard-coding because the scanner library shouldn't
 // know or care about how its consumers serialize results.

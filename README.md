@@ -46,14 +46,14 @@ The scanner consults three GitHub APIs in priority order: rulesets (publicly rea
 **Pass:** required reviewers is set to 1 or more.
 **Fail:** required reviewers is not configured, or set to 0, or branch protection is not enabled.
 
-#### 3. Requires status checks before merging
+#### 3. Has required checks
 
-**Check:** the default branch's protection rules require at least one status check to pass before merging.
+**Check:** the default branch's protection requires at least one programmatic check to pass before a PR can be merged.
 
-**Pass:** at least one required status check is configured (via rulesets, classic protection, or the public branch endpoint's `protection.required_status_checks.contexts`).
-**Fail:** none of those signals expose required contexts.
+**Pass:** at least one merge-blocking check requirement is configured. Detection unions five rulesets rule types (`required_status_checks`, `workflows`, `code_scanning`, `code_quality`, `required_deployments`), classic branch protection's `required_status_checks.contexts`, and the public branch endpoint's `protection.required_status_checks.contexts`.
+**Fail:** none of those signals reveal a check-passing requirement.
 
-The public branch endpoint exposes the `contexts` array even to non-admin readers, so this rule is correctly answered for both admin and public scans.
+The public branch endpoint exposes the `contexts` array even to non-admin readers, so this rule is correctly answered for both admin and public scans. New ruleset rule types that act as merge gates can be added by extending the `switch` in `GetRulesets`.
 
 #### 4. Has CODEOWNERS
 
@@ -151,7 +151,7 @@ The scorecard is a single Markdown document. Structure:
 |------|---------|---------|----------|
 | Has branch protection | 11 | 42 | 20% |
 | Has required reviewers | 4 | 49 | 7% |
-| Requires status checks before merging | 4 | 49 | 7% |
+| Has required checks | 4 | 49 | 7% |
 | Has CODEOWNERS | 3 | 50 | 5% |
 | Has CI workflow | 27 | 26 | 50% |
 
@@ -208,7 +208,7 @@ Checks that the default branch has a protection rule in place. Detected via any 
 
 **Failing scored rules:**
 - Has CODEOWNERS
-- Requires status checks before merging
+- Has required checks
 
 **Additional check failures:**
 - Has SECURITY.md
@@ -223,7 +223,7 @@ Checks that the default branch has a protection rule in place. Detected via any 
 **Failing scored rules:**
 - Has branch protection
 - Has required reviewers
-- Requires status checks before merging
+- Has required checks
 - Has CODEOWNERS
 - Has CI workflow
 

@@ -754,7 +754,7 @@ func TestScore_OmitsAdminOnlyRulesUnderNonAdmin(t *testing.T) {
 	}
 	// Per-rule pass rates over the 4 evaluated rules:
 	//   has_branch_protection: 2/2 = 100
-	//   requires_status_checks: 1/2 = 50
+	//   has_required_checks: 1/2 = 50
 	//   has_codeowners: 1/2 = 50
 	//   has_ci_workflow: 1/2 = 50
 	// Mean = (100+50+50+50)/4 = 62
@@ -929,7 +929,7 @@ func TestScan_NonAdminKeepsNonAdminScoredRules(t *testing.T) {
 	}
 	wantPresent := []string{
 		"Has branch protection",
-		"Requires status checks before merging",
+		"Has required checks",
 		"Has CODEOWNERS",
 		"Has CI workflow",
 	}

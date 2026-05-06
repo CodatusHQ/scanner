@@ -416,8 +416,84 @@ func TestGetRulesets_WithPullRequestAndStatusChecks(t *testing.T) {
 	if bp.RequiredReviewers != 1 {
 		t.Errorf("expected 1 reviewer, got %d", bp.RequiredReviewers)
 	}
-	if len(bp.RequiredStatusChecks) != 2 || bp.RequiredStatusChecks[0] != "test" || bp.RequiredStatusChecks[1] != "lint" {
+	// The slice gets one placeholder per merge-gate rule encountered;
+	// content is the rule-type name, since the consuming rule
+	// (HasRequiredChecks) only checks len() > 0.
+	if len(bp.RequiredStatusChecks) != 1 || bp.RequiredStatusChecks[0] != "required_status_checks" {
 		t.Errorf("status checks mismatch: %v", bp.RequiredStatusChecks)
+	}
+}
+
+// TestGetRulesets_AllMergeGateTypes verifies that every rule type the
+// scanner counts as a merge gate gets recognized. Each contributes a
+// placeholder in RequiredStatusChecks (the rule-type name); pull_request
+// review counts go into RequiredReviewers separately. Rule types that
+// aren't merge gates (deletion, non_fast_forward, required_signatures,
+// merge_queue, copilot_code_review, etc.) must NOT appear.
+func TestGetRulesets_AllMergeGateTypes(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/org/repo/rules/branches/main", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `[
+			{"type": "deletion"},
+			{"type": "non_fast_forward"},
+			{"type": "required_signatures"},
+			{"type": "merge_queue"},
+			{"type": "copilot_code_review"},
+			{"type": "pull_request", "parameters": {"required_approving_review_count": 2}},
+			{"type": "required_status_checks", "parameters": {"required_status_checks": [{"context": "test"}]}},
+			{"type": "workflows", "parameters": {"workflows": [{"path": ".github/workflows/dependency-review.yml"}]}},
+			{"type": "code_scanning", "parameters": {"code_scanning_tools": [{"tool": "CodeQL"}]}},
+			{"type": "code_quality", "parameters": {"severity": "errors"}},
+			{"type": "required_deployments", "parameters": {"required_deployment_environments": ["staging"]}}
+		]`)
+	})
+	client := setupTestServer(t, mux)
+
+	bp, err := client.GetRulesets(context.Background(), "org", "repo", "main")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if bp == nil {
+		t.Fatal("expected branch protection, got nil")
+	}
+	if bp.RequiredReviewers != 2 {
+		t.Errorf("expected 2 reviewers, got %d", bp.RequiredReviewers)
+	}
+	want := []string{"required_status_checks", "workflows", "code_scanning", "code_quality", "required_deployments"}
+	if len(bp.RequiredStatusChecks) != len(want) {
+		t.Fatalf("expected %d gate placeholders, got %d (%v)", len(want), len(bp.RequiredStatusChecks), bp.RequiredStatusChecks)
+	}
+	for i, w := range want {
+		if bp.RequiredStatusChecks[i] != w {
+			t.Errorf("position %d: expected %q, got %q", i, w, bp.RequiredStatusChecks[i])
+		}
+	}
+}
+
+// TestGetRulesets_OnlyNonGateRulesReturnsNil verifies that a repo whose
+// rulesets contain only non-merge-gate rule types (signing, branch
+// shape, etc.) is reported as no protection from this source. The
+// caller's three-source merge then falls through to classic and public
+// branch endpoints.
+func TestGetRulesets_OnlyNonGateRulesReturnsNil(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/org/repo/rules/branches/main", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `[
+			{"type": "deletion"},
+			{"type": "non_fast_forward"},
+			{"type": "required_signatures"},
+			{"type": "merge_queue"},
+			{"type": "copilot_code_review"}
+		]`)
+	})
+	client := setupTestServer(t, mux)
+
+	bp, err := client.GetRulesets(context.Background(), "org", "repo", "main")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if bp != nil {
+		t.Errorf("expected nil for repo with only non-gate rule types, got %+v", bp)
 	}
 }
 

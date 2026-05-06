@@ -38,7 +38,7 @@ func TestGenerateReport_StrongAndWeakBuckets(t *testing.T) {
 	want := `# Codatus - Repo Standards Scorecard
 
 **Org:** test-org<br>
-**Scanned:** 2026-04-05 12:00 UTC<br>
+**Scanned:** 2026-04-05 12:00 UTC (scanner v0.8.4)<br>
 **Repos:** 2 of 2 scanned
 
 ## Scored rules
@@ -47,7 +47,7 @@ func TestGenerateReport_StrongAndWeakBuckets(t *testing.T) {
 |------|---------|---------|----------|
 | Has branch protection | 1 | 1 | 50% |
 | Has required reviewers | 1 | 1 | 50% |
-| Requires status checks before merging | 1 | 1 | 50% |
+| Has required checks | 1 | 1 | 50% |
 | Has CODEOWNERS | 1 | 1 | 50% |
 | Has CI workflow | 1 | 1 | 50% |
 
@@ -82,9 +82,9 @@ Checks that the default branch's protection requires at least one approving revi
 
 ---
 
-#### Requires status checks before merging
+#### Has required checks
 
-Checks that the default branch's protection requires at least one status check to pass before a PR can be merged. Detected from any of three sources: modern repository rulesets (a ` + "`required_status_checks`" + ` rule), legacy classic branch protection (` + "`required_status_checks.contexts`" + `), or the public branch endpoint's ` + "`protection.required_status_checks.contexts`" + ` field. To fix: edit the default-branch rule (or ruleset), enable "Require status checks to pass before merging", and select at least one check.
+Checks that the default branch's protection requires at least one programmatic check to pass before a PR can be merged. Detected from any of three sources: modern repository rulesets (rule types ` + "`required_status_checks`" + `, ` + "`workflows`" + `, ` + "`code_scanning`" + `, ` + "`code_quality`" + `, or ` + "`required_deployments`" + `), legacy classic branch protection (` + "`required_status_checks.contexts`" + `), or the public branch endpoint's ` + "`protection.required_status_checks.contexts`" + ` field. To fix: in Rulesets or Branch protection rules, add any check-passing requirement on the default branch.
 
 ---
 
@@ -147,7 +147,7 @@ Checks for a SECURITY.md file in any of the three locations GitHub recognizes fo
 **Failing scored rules:**
 - Has branch protection
 - Has required reviewers
-- Requires status checks before merging
+- Has required checks
 - Has CODEOWNERS
 - Has CI workflow
 
@@ -165,7 +165,7 @@ func TestGenerateReport_EmptyResults(t *testing.T) {
 	want := `# Codatus - Repo Standards Scorecard
 
 **Org:** empty-org<br>
-**Scanned:** 2026-04-05 12:00 UTC<br>
+**Scanned:** 2026-04-05 12:00 UTC (scanner v0.8.4)<br>
 **Repos:** 0 scanned
 
 No repos found.
@@ -544,7 +544,7 @@ func TestGenerateReport_HeaderUsesBrLineBreaks(t *testing.T) {
 	if !strings.Contains(got, "**Org:** test-org<br>\n") {
 		t.Errorf("expected **Org:** line to end with <br>; got:\n%s", got)
 	}
-	if !strings.Contains(got, "**Scanned:** 2026-04-05 12:00 UTC<br>\n") {
+	if !strings.Contains(got, "**Scanned:** 2026-04-05 12:00 UTC (scanner v0.8.4)<br>\n") {
 		t.Errorf("expected **Scanned:** line to end with <br>; got:\n%s", got)
 	}
 }

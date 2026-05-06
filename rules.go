@@ -42,7 +42,7 @@ func AllRules() []Rule {
 		// Scored rules - drive the org-level score.
 		HasBranchProtection{},
 		HasRequiredReviewers{},
-		HasRequiredStatusChecks{},
+		HasRequiredChecks{},
 		HasCodeowners{},
 		HasCIWorkflow{},
 		// Additional checks - informational only.
@@ -108,16 +108,22 @@ func (r HasRequiredReviewers) Description() string {
 	return "Checks that the default branch's protection requires at least one approving review before a PR can be merged. The reviewer count is read from both modern repository rulesets (a `pull_request` rule with `required_approving_review_count >= 1`) and legacy classic branch protection (the `required_pull_request_reviews.required_approving_review_count` field). To fix: edit the default-branch rule (or ruleset) and enable the pull-request review requirement with at least 1 required reviewer."
 }
 
-// HasRequiredStatusChecks checks that at least one status check is required before merging.
-type HasRequiredStatusChecks struct{}
+// HasRequiredChecks checks that the default branch's protection requires
+// at least one programmatic check to pass before a PR can be merged. The
+// "checks" being required can come from any of five rulesets rule types
+// (required_status_checks, workflows, code_scanning, code_quality,
+// required_deployments) or from classic branch protection's contexts list -
+// all of which the merge step in scanWithClient unions into the single
+// BranchProtection.RequiredStatusChecks slice.
+type HasRequiredChecks struct{}
 
-func (r HasRequiredStatusChecks) Name() string           { return "Requires status checks before merging" }
-func (r HasRequiredStatusChecks) Category() RuleCategory { return CategoryScored }
-func (r HasRequiredStatusChecks) Check(repo Repo) bool {
+func (r HasRequiredChecks) Name() string           { return "Has required checks" }
+func (r HasRequiredChecks) Category() RuleCategory { return CategoryScored }
+func (r HasRequiredChecks) Check(repo Repo) bool {
 	return repo.BranchProtection != nil && len(repo.BranchProtection.RequiredStatusChecks) > 0
 }
-func (r HasRequiredStatusChecks) Description() string {
-	return "Checks that the default branch's protection requires at least one status check to pass before a PR can be merged. Detected from any of three sources: modern repository rulesets (a `required_status_checks` rule), legacy classic branch protection (`required_status_checks.contexts`), or the public branch endpoint's `protection.required_status_checks.contexts` field. To fix: edit the default-branch rule (or ruleset), enable \"Require status checks to pass before merging\", and select at least one check."
+func (r HasRequiredChecks) Description() string {
+	return "Checks that the default branch's protection requires at least one programmatic check to pass before a PR can be merged. Detected from any of three sources: modern repository rulesets (rule types `required_status_checks`, `workflows`, `code_scanning`, `code_quality`, or `required_deployments`), legacy classic branch protection (`required_status_checks.contexts`), or the public branch endpoint's `protection.required_status_checks.contexts` field. To fix: in Rulesets or Branch protection rules, add any check-passing requirement on the default branch."
 }
 
 // HasCodeowners checks that a CODEOWNERS file exists in root, docs/, or .github/.

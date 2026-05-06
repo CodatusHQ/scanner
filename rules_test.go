@@ -315,8 +315,8 @@ func TestHasRequiredReviewers_Fail_NoProtection(t *testing.T) {
 	}
 }
 
-func TestHasRequiredStatusChecks_Pass(t *testing.T) {
-	rule := HasRequiredStatusChecks{}
+func TestHasRequiredChecks_Pass(t *testing.T) {
+	rule := HasRequiredChecks{}
 
 	bp := &BranchProtection{RequiredStatusChecks: []string{"ci/build"}}
 	if !rule.Check(Repo{BranchProtection: bp}) {
@@ -324,8 +324,8 @@ func TestHasRequiredStatusChecks_Pass(t *testing.T) {
 	}
 }
 
-func TestHasRequiredStatusChecks_Fail_Empty(t *testing.T) {
-	rule := HasRequiredStatusChecks{}
+func TestHasRequiredChecks_Fail_Empty(t *testing.T) {
+	rule := HasRequiredChecks{}
 
 	bp := &BranchProtection{RequiredStatusChecks: []string{}}
 	if rule.Check(Repo{BranchProtection: bp}) {
@@ -333,8 +333,8 @@ func TestHasRequiredStatusChecks_Fail_Empty(t *testing.T) {
 	}
 }
 
-func TestHasRequiredStatusChecks_Fail_NoProtection(t *testing.T) {
-	rule := HasRequiredStatusChecks{}
+func TestHasRequiredChecks_Fail_NoProtection(t *testing.T) {
+	rule := HasRequiredChecks{}
 
 	if rule.Check(Repo{BranchProtection: nil}) {
 		t.Error("expected fail when branch protection is nil")
@@ -353,7 +353,7 @@ func TestAllRules_CategorySetCorrectly(t *testing.T) {
 	wantScored := map[string]bool{
 		"Has branch protection":                  true,
 		"Has required reviewers":                 true,
-		"Requires status checks before merging":  true,
+		"Has required checks":  true,
 		"Has CODEOWNERS":                         true,
 		"Has CI workflow":                        true,
 	}
@@ -403,7 +403,7 @@ func TestAllRules_ImportanceOrder(t *testing.T) {
 		// Scored, in importance order:
 		"Has branch protection",
 		"Has required reviewers",
-		"Requires status checks before merging",
+		"Has required checks",
 		"Has CODEOWNERS",
 		"Has CI workflow",
 		// Additional, in importance order:
