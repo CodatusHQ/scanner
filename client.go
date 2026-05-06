@@ -2,6 +2,7 @@ package scanner
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -264,8 +265,36 @@ func (c *realGitHubClient) GetBranchProtection(ctx context.Context, owner, repo,
 	return bp, nil
 }
 
+// GetRulesets reads the public /repos/{o}/{r}/rules/branches/{br}
+// endpoint and aggregates merge-gate signals into a BranchProtection.
+//
+// We bypass go-github's typed GetRulesForBranch in favor of raw JSON
+// parsing because go-github v72-v80 lacks a typed wrapper for the
+// `code_quality` rule type (a real, currently-used rule type). With
+// raw JSON, supporting a new rule type is a one-line change in the
+// switch below rather than tracking go-github releases.
+//
+// Two categories contribute to BranchProtection:
+//   - pull_request: review count goes into RequiredReviewers
+//   - merge gates: any rule type that requires "something to pass before
+//     merge" contributes its rule-type name to RequiredStatusChecks. The
+//     rule's Check function only needs len() > 0; the strings are
+//     placeholders, not diagnostic
+//
+// Other rule types (deletion, non_fast_forward, required_signatures,
+// merge_queue, etc.) enforce branch shape or routing, not "must pass
+// before merge," and are intentionally ignored.
 func (c *realGitHubClient) GetRulesets(ctx context.Context, owner, repo, branch string) (*BranchProtection, error) {
-	rules, resp, err := c.client.Repositories.GetRulesForBranch(ctx, owner, repo, branch, nil)
+	req, err := c.client.NewRequest(http.MethodGet, fmt.Sprintf("repos/%s/%s/rules/branches/%s", owner, repo, branch), nil)
+	if err != nil {
+		return nil, fmt.Errorf("build request for branch rules %s/%s: %w", owner, repo, err)
+	}
+
+	var rules []struct {
+		Type       string          `json:"type"`
+		Parameters json.RawMessage `json:"parameters"`
+	}
+	resp, err := c.client.Do(ctx, req, &rules)
 	if err != nil {
 		if IsRateLimitError(err) {
 			return nil, err
@@ -277,23 +306,21 @@ func (c *realGitHubClient) GetRulesets(ctx context.Context, owner, repo, branch 
 	}
 
 	var bp BranchProtection
-	found := false
-
-	for _, pr := range rules.PullRequest {
-		found = true
-		if pr.Parameters.RequiredApprovingReviewCount > bp.RequiredReviewers {
-			bp.RequiredReviewers = pr.Parameters.RequiredApprovingReviewCount
+	for _, r := range rules {
+		switch r.Type {
+		case "pull_request":
+			var p struct {
+				RequiredApprovingReviewCount int `json:"required_approving_review_count"`
+			}
+			if json.Unmarshal(r.Parameters, &p) == nil && p.RequiredApprovingReviewCount > bp.RequiredReviewers {
+				bp.RequiredReviewers = p.RequiredApprovingReviewCount
+			}
+		case "required_status_checks", "workflows", "code_scanning", "code_quality", "required_deployments":
+			bp.RequiredStatusChecks = append(bp.RequiredStatusChecks, r.Type)
 		}
 	}
 
-	for _, sc := range rules.RequiredStatusChecks {
-		found = true
-		for _, check := range sc.Parameters.RequiredStatusChecks {
-			bp.RequiredStatusChecks = append(bp.RequiredStatusChecks, check.Context)
-		}
-	}
-
-	if !found {
+	if bp.RequiredReviewers == 0 && len(bp.RequiredStatusChecks) == 0 {
 		return nil, nil
 	}
 	return &bp, nil

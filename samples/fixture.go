@@ -35,7 +35,7 @@ func Fixture() scanner.ScanResult {
 	scoredRuleNames := []string{
 		"Has branch protection",
 		"Has required reviewers",
-		"Requires status checks before merging",
+		"Has required checks",
 		"Has CODEOWNERS",
 		"Has CI workflow",
 	}
@@ -62,7 +62,7 @@ func Fixture() scanner.ScanResult {
 			pushedAt: recent,
 			passing: setOf(
 				"Has branch protection", "Has required reviewers",
-				"Requires status checks before merging", "Has CODEOWNERS",
+				"Has required checks", "Has CODEOWNERS",
 				"Has CI workflow",
 				"Has README", "Has LICENSE", "Has repo description",
 				"Has activity", "Has SECURITY.md",
@@ -73,7 +73,7 @@ func Fixture() scanner.ScanResult {
 			pushedAt: recent,
 			passing: setOf(
 				"Has branch protection", "Has required reviewers",
-				"Requires status checks before merging", "Has CODEOWNERS",
+				"Has required checks", "Has CODEOWNERS",
 				"Has CI workflow",
 				"Has README", "Has LICENSE", "Has repo description",
 				"Has activity", "Has SECURITY.md",
@@ -126,7 +126,7 @@ func Fixture() scanner.ScanResult {
 			name:     "acme-search",
 			pushedAt: thisYear,
 			passing: setOf(
-				"Has branch protection", "Requires status checks before merging",
+				"Has branch protection", "Has required checks",
 				"Has CI workflow",
 				"Has README", "Has LICENSE", "Has repo description",
 				"Has activity",

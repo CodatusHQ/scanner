@@ -59,7 +59,7 @@ func writeHeader(b *strings.Builder, sr ScanResult) {
 	// instead of folding consecutive single-newlines into one paragraph.
 	// CommonMark's Raw HTML rule allows inline phrasing tags like br.
 	fmt.Fprintf(b, "**Org:** %s<br>\n", sr.Org)
-	fmt.Fprintf(b, "**Scanned:** %s<br>\n", sr.ScannedAt.UTC().Format("2006-01-02 15:04 UTC"))
+	fmt.Fprintf(b, "**Scanned:** %s (scanner %s)<br>\n", sr.ScannedAt.UTC().Format("2006-01-02 15:04 UTC"), Version)
 	fmt.Fprintf(b, "**Repos:** %s\n", repoStatsLine(sr))
 }
 

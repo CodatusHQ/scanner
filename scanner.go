@@ -8,6 +8,11 @@ import (
 	"time"
 )
 
+// Version is the semver tag of this scanner library. Bumped manually per
+// release. Surfaced in the report header so a reader can see which
+// scanner version produced a given scorecard.
+const Version = "v0.8.4"
+
 // Auth identifies how the scanner authenticates to GitHub. It is a sealed
 // interface — only PATAuth and InstallationAuth in this package satisfy it.
 // New auth types are added by defining a struct with an isAuth() method.

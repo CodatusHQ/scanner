@@ -91,7 +91,7 @@ func TestAggregate_KeyedAndOrderedByInputRules(t *testing.T) {
 		makeRepo("a", map[string]bool{
 			"Has branch protection":                 false,
 			"Has required reviewers":                false,
-			"Requires status checks before merging": false,
+			"Has required checks": false,
 		}),
 		makeRepo("b", map[string]bool{
 			"Has branch protection": false,
@@ -102,7 +102,7 @@ func TestAggregate_KeyedAndOrderedByInputRules(t *testing.T) {
 	wantKeys := []string{
 		"has_branch_protection",
 		"has_required_reviewers",
-		"requires_status_checks_before_merging",
+		"has_required_checks",
 		"has_codeowners",
 		"has_ci_workflow",
 	}
@@ -227,7 +227,7 @@ func TestBuildStats_NewShape(t *testing.T) {
 	wantScoredOrder := []string{
 		"has_branch_protection",
 		"has_required_reviewers",
-		"requires_status_checks_before_merging",
+		"has_required_checks",
 		"has_codeowners",
 		"has_ci_workflow",
 	}
@@ -298,7 +298,7 @@ func TestJSONKey_DerivesSnakeCaseFromRuleName(t *testing.T) {
 		{"Has CODEOWNERS", "has_codeowners"},
 		{"Has branch protection", "has_branch_protection"},
 		{"Has required reviewers", "has_required_reviewers"},
-		{"Requires status checks before merging", "requires_status_checks_before_merging"},
+		{"Has required checks", "has_required_checks"},
 		{"Has activity", "has_activity"},
 		// Edge cases.
 		{"  Leading spaces", "leading_spaces"},
@@ -444,7 +444,7 @@ func TestBuildStats_NonAdminOmitsAdminOnlyRule(t *testing.T) {
 	// The other 4 scored rules must still appear in their importance order.
 	for _, k := range []string{
 		"has_branch_protection",
-		"requires_status_checks_before_merging",
+		"has_required_checks",
 		"has_codeowners",
 		"has_ci_workflow",
 	} {
